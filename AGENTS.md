@@ -4,10 +4,42 @@ Backstage is a throwaway prototype for a 15-minute presentation. Read `README.md
 
 ## Scope and layout
 
-- The web app uses Next.js and TypeScript. `web/` is its project root, with `package.json`, lockfile, framework configuration, and `app/` directly inside it. Use Next.js Route Handlers for the API.
-- The agent uses the Strands Agents SDK for Python. Its project root is `agent/`, containing `pyproject.toml`, `uv.lock`, and a flat `src/`. Call it the agent in code and filenames.
-- Keep Box configuration and policy in `box/`, presentation material in root `talk.md`, and setup instructions in `README.md`.
-- Root `AGENTS.md` and `.gitignore` are expected. Keep dependency manifests, lockfiles, generated files, and runtime data under their owning component. Keep secrets and runtime data out of git.
+Use this target layout. Create files as their issues are implemented:
+
+```text
+backstage/
+├── web/                       # Next.js project root
+│   ├── package.json
+│   ├── package-lock.json
+│   ├── tsconfig.json
+│   ├── app/                   # Next.js routing directory
+│   │   ├── layout.tsx
+│   │   ├── page.tsx           # Audience page
+│   │   ├── host/              # Host dashboard
+│   │   └── api/               # Route Handlers
+│   ├── db.ts
+│   └── event.ts
+├── agent/                     # Python project root
+│   ├── pyproject.toml
+│   ├── uv.lock
+│   └── src/
+│       ├── main.py
+│       ├── agent.py
+│       ├── tools.py
+│       ├── client.py
+│       └── prompt.md
+├── box/
+│   ├── box.toml
+│   └── policy.dw
+├── talk.md                    # Presentation material
+├── README.md                  # Pitch and setup instructions
+├── AGENTS.md
+└── .gitignore
+```
+
+- Use Next.js and TypeScript for the web app, with Route Handlers for the API. Additional web configuration, assets, and helper files belong directly under `web/` or in framework-required directories.
+- Use the Strands Agents SDK for Python. Keep `agent/src/` flat and call it the agent in code and filenames. Do not add intermediate project wrappers or a `src/backstage/agent/` hierarchy.
+- Keep dependency manifests, lockfiles, generated files, and runtime data under their owning component. Keep secrets and runtime data out of git.
 - Strands Decider is deferred. Do not introduce it, another agent framework, or a second web backend.
 - Prefer direct implementations and a few focused files. Avoid workspace frameworks, generic abstraction layers, distributed queues, and infrastructure intended for a production service.
 

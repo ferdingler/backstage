@@ -1,0 +1,18 @@
+[Unit]
+Description=Backstage local presentation server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/workplace/backstage/web
+Environment=NODE_ENV=production
+Environment=BACKSTAGE_DB=data/backstage.sqlite
+# Create this private environment file using the names in .env.example.
+EnvironmentFile=-%h/.config/backstage/web.env
+ExecStart=/usr/bin/env node server.mjs
+Restart=on-failure
+RestartSec=3
+UMask=0077
+
+[Install]
+WantedBy=default.target

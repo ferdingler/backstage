@@ -1,0 +1,15 @@
+[project]
+name = "backstage-agent"
+version = "0.1.0"
+description = "One bounded Strands worker for the Backstage presentation"
+requires-python = ">=3.12"
+dependencies = [
+  "strands-agents>=1.63,<2",
+  "httpx>=0.28,<1",
+]
+
+[tool.uv]
+package = false
+
+[project.optional-dependencies]
+openai = ["strands-agents[openai]>=1.63,<2"]

@@ -1,0 +1,22 @@
+# Template: run `uv run --project agent python box/configure.py` before starting.
+# Generated paths live in ignored box/box.local.toml, not in this portable file.
+# Reference: strands-agents/box 5ba7010488dc28c64b7f18dd4c5328cc8b02dafa.
+name = "backstage"
+box_dir = "@BOX_STATE@"
+policy = "policy.local.dw"
+
+[agent]
+command = ["@VENV_PYTHON@", "@AGENT_SOURCE@/main.py"]
+workspace = "@SCRATCH@"
+env = { AWS_REGION = "us-west-2", AWS_EC2_METADATA_DISABLED = "true", MODEL_ID = "us.anthropic.claude-sonnet-4-5-20250929-v1:0", BACKSTAGE_API_URL = "http://127.0.0.1:3003", BACKSTAGE_NOTES = "@NOTES@", BACKSTAGE_SCRATCH = "@SCRATCH@", BACKSTAGE_SHELL = "zsh", PATH = "/usr/bin:/bin", TMPDIR = "@TMP@" }
+
+[agent.filesystem]
+read = ["@VENV@", "@PYTHON_RUNTIME@", "@AGENT_SOURCE@", "@TMP@"]
+write = ["@TMP@"]
+# The interpreter's binary and shared libraries are resolved during setup.
+exec = ["@PYTHON_EXEC@", @NATIVE_EXEC@]
+# Notes and scratch are deliberately accessed through Strands Shell, not here.
+
+[egress.bedrock]
+destinations = ["bedrock-runtime.us-west-2.amazonaws.com"]
+secret.ref = "aws://bedrock"

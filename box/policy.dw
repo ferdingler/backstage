@@ -1,0 +1,77 @@
+// This template is materialized by configure.py with canonical local paths.
+// The only model connection; the gateway injects credentials from aws://bedrock.
+@id("bedrock_connect")
+permit (principal, action == Box::Action::"net:connect", resource)
+when {
+  context.input.host == "bedrock-runtime.us-west-2.amazonaws.com" &&
+  context.input.port == 443
+};
+
+@id("bedrock_converse")
+permit (principal, action == Box::Action::"http:request", resource)
+when {
+  context.input.host == "bedrock-runtime.us-west-2.amazonaws.com" &&
+  context.input.port == 443 &&
+  context.input.method == "POST" &&
+  (context.input.path like "/model/*/converse" ||
+   context.input.path like "/model/*/converse-stream")
+};
+
+// Agent-only listener; it independently rejects host and audience operations.
+@id("agent_connect")
+permit (principal, action == Box::Action::"net:connect", resource)
+when { context.input.host == "127.0.0.1" && context.input.port == 3003 };
+
+@id("agent_read")
+permit (principal, action == Box::Action::"http:request", resource)
+when {
+  context.input.host == "127.0.0.1" && context.input.port == 3003 &&
+  context.input.method == "GET" && context.input.path == "/api/agent/state"
+};
+
+@id("agent_write")
+permit (principal, action == Box::Action::"http:request", resource)
+when {
+  context.input.host == "127.0.0.1" && context.input.port == 3003 &&
+  context.input.method == "POST" &&
+  ["/api/agent/claim", "/api/agent/heartbeat", "/api/agent/result",
+   "/api/agent/ack", "/api/agent/fail", "/api/agent/activity"].contains(context.input.path)
+};
+
+// Only file-work builtins. Model traffic stays in the budgeted SDK path.
+// Every file access remains a separate policy decision. No external spawning.
+@id("shell_builtins")
+permit (principal, action == Box::Action::"shell:exec", resource)
+when {
+  ["cat", "printf", "echo", "pwd", "ls", "head", "tail", "wc", "grep"].contains(context.input.program)
+};
+
+@id("presentation_notes")
+permit (principal, action == Box::Action::"fs:read", resource)
+when { context.input.path == "@POLICY_NOTES@" };
+
+@id("scratch_read")
+permit (principal, action == Box::Action::"fs:read", resource)
+when {
+  context.input.path == "@POLICY_SCRATCH@" ||
+  context.input.path like "@POLICY_SCRATCH@/*"
+};
+
+@id("scratch_write")
+permit (principal, action == Box::Action::"fs:write", resource)
+when {
+  context.input.path == "@POLICY_SCRATCH@" ||
+  context.input.path like "@POLICY_SCRATCH@/*"
+};
+
+@id("dev_null")
+permit (principal, action in [Box::Action::"fs:read", Box::Action::"fs:write"], resource)
+when { context.input.path == "/dev/null" };
+
+@id("no_delete")
+@description("Backstage keeps its files. Write disposable notes inside scratch instead.")
+forbid (principal, action == Box::Action::"fs:delete", resource);
+
+@id("no_move")
+@description("Backstage does not move files. Keep all output inside scratch.")
+forbid (principal, action == Box::Action::"fs:move", resource);

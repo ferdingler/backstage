@@ -1,0 +1,52 @@
+# Runnable local reverse proxy. Set AUDIENCE_LISTEN to a provisioned HTTPS domain
+# only when that target is authorized. This repository deploys nothing.
+{$AUDIENCE_LISTEN:http://127.0.0.1:3010} {
+	bind 127.0.0.1
+	@audienceRead {
+		method GET HEAD
+		path / /broadcast /favicon.ico /_next/static/*
+	}
+	@publicRead {
+		method GET
+		path /api/state /api/broadcast /api/health
+	}
+	@question {
+		method POST
+		path /api/questions
+	}
+	@vote {
+		method PUT
+		path /api/votes
+	}
+	handle @audienceRead {
+		reverse_proxy 127.0.0.1:3000 {
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up -Forwarded
+		}
+	}
+	handle @publicRead {
+		reverse_proxy 127.0.0.1:3000 {
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up -Forwarded
+		}
+	}
+	handle @question {
+		reverse_proxy 127.0.0.1:3000 {
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up -Forwarded
+		}
+	}
+	handle @vote {
+		reverse_proxy 127.0.0.1:3000 {
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up -Forwarded
+		}
+	}
+	handle {
+		respond "Unavailable on public ingress" 404
+	}
+}

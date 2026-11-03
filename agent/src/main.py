@@ -10,7 +10,6 @@ import logging
 import os
 import signal
 import sys
-import time
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -40,12 +39,13 @@ async def report_probe_activity(success: bool) -> None:
 
 
 class Worker:
-    def __init__(self, client: Client, *, deadline: float = 60):
+    def __init__(self, client: Client, *, deadline: float = 60, agent: BackstageAgent | None = None):
         self.client = client
         self.deadline = deadline
         self.stopping = asyncio.Event()
         self.work: dict[str, Any] | None = None
-        self.agent = BackstageAgent(self.activity)
+        self.agent = BackstageAgent(self.activity) if agent is None else agent
+        self._run_cancelled: asyncio.Event | None = None
         self.generation: str | None = None
         self.last_status: str | None = None
 
@@ -56,15 +56,18 @@ class Worker:
 
     def stop(self) -> None:
         self.stopping.set()
-        if self.work:
-            self.agent.cancel()
+        if self._run_cancelled is not None:
+            self._run_cancelled.set()
 
     async def activity(self, kind: str) -> None:
         if self.work:
-            with contextlib.suppress(httpx.HTTPError, ServiceError):
-                await self.client.post(
-                    "activity", generation=self.work["generation"], workId=self.work["id"], kind=kind,
-                )
+            # Activity is best effort: a stalled report must not hold up a
+            # completed shell operation for the client's full HTTP timeout.
+            with contextlib.suppress(TimeoutError, httpx.HTTPError, ServiceError):
+                async with asyncio.timeout(0.25):
+                    await self.client.post(
+                        "activity", generation=self.work["generation"], workId=self.work["id"], kind=kind,
+                    )
 
     async def heartbeat(self, status: str) -> dict[str, Any]:
         self.status(status)
@@ -77,29 +80,35 @@ class Worker:
     async def process(self, work: dict[str, Any]) -> bool:
         self.work = work
         self.status("processing")
-        started = time.monotonic()
-        task = asyncio.create_task(asyncio.wait_for(self.agent.run(work), timeout=self.deadline))
+        cancelled = self._run_cancelled = asyncio.Event()
+        if self.stopping.is_set():
+            cancelled.set()
+        task = asyncio.create_task(self.agent.run(work, deadline=self.deadline, cancelled=cancelled))
         reason = "error"
         published = False
         try:
             while not task.done():
-                await asyncio.wait({task}, timeout=min(2, max(0.01, self.deadline - (time.monotonic() - started))))
+                await asyncio.wait({task}, timeout=2)
                 if self.stopping.is_set():
                     reason = "cancelled"
                     raise InterruptedError("Worker shutting down")
-                if time.monotonic() - started >= self.deadline:
-                    reason = "timeout"
-                    raise TimeoutError("Run deadline reached")
                 if task.done():
                     break
                 current = await self.heartbeat("processing")
                 if current.get("agentPaused") or current.get("pauseEpoch") != work["pauseEpoch"] or current.get("generation") != work["generation"]:
                     reason = "cancelled"
                     raise InterruptedError("Run invalidated by host control")
-            output = await task
+            outcome = await asyncio.shield(task)
+            if outcome.reason is not None:
+                reason = outcome.reason
+                self.status("paused" if reason == "cancelled" else "retrying")
+                detail = f"; {outcome.error_type}" if outcome.error_type else ""
+                print(f"Backstage: run ended ({reason}{detail})", flush=True)
+                return False
+            assert outcome.output is not None
             payload = {
                 "generation": work["generation"], "workId": work["id"], "resultId": work["id"],
-                "callsUsed": self.agent.state.calls, **output,
+                "callsUsed": outcome.calls, **outcome.output,
             }
             # Lost HTTP responses are retried with the same durable result ID.
             # Never ask the model to recreate an already completed reply.
@@ -115,6 +124,9 @@ class Worker:
             with contextlib.suppress(httpx.HTTPError, ServiceError):
                 await self.client.post("ack", generation=work["generation"], workId=work["id"])
             return True
+        except asyncio.CancelledError:
+            reason = "cancelled"
+            raise
         except (TimeoutError, InterruptedError, ServiceError, httpx.HTTPError, ValueError) as error:
             # Report only a category. Provider exceptions can embed request text,
             # credential IDs or payloads; those never belong in the terminal/UI.
@@ -128,11 +140,10 @@ class Worker:
             print(f"Backstage: model/tool failure ({type(error).__name__})", flush=True)
             return False
         finally:
-            if not task.done():
-                self.agent.cancel()
-                task.cancel()
-                with contextlib.suppress(asyncio.CancelledError, Exception):
-                    await task
+            cancelled.set()
+            # The invocation owns cancellation and teardown. Its terminal
+            # outcome includes calls attempted even when this worker is cancelled.
+            outcome = await task
             # Published work ignores duplicate fail bookkeeping. Unfinished work
             # releases only its measured unused calls; a process crash leaves the
             # durable reservation charged conservatively when the lease expires.
@@ -140,11 +151,12 @@ class Worker:
                 with contextlib.suppress(httpx.HTTPError, ServiceError):
                     await self.client.post(
                         "fail", generation=work["generation"], workId=work["id"],
-                        callsUsed=self.agent.state.calls, reason=reason,
+                        callsUsed=outcome.calls, reason=reason,
                     )
             with contextlib.suppress(httpx.HTTPError, ServiceError):
                 await self.heartbeat("idle" if published else "paused" if reason == "cancelled" else "retrying")
             self.work = None
+            self._run_cancelled = None
 
     async def run(self, *, once: bool = False) -> int:
         backoff = 2.0

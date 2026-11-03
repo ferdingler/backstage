@@ -26,7 +26,206 @@ type Control = {
   confirmation?: string;
 };
 
-type Tab = "votes" | "recommended";
+type Tab = "votes" | "recommended" | "talking";
+const TITLE_MAX = 120;
+const TALKING_POINTS_MAX = 50_000;
+
+/** Opens and closes a native modal dialog in step with `open`. */
+function useModal(open: boolean, onOpen?: () => void) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const opened = useRef(onOpen);
+  opened.current = onOpen;
+  useEffect(() => {
+    const dialog = ref.current;
+    if (!dialog) return;
+    if (open && !dialog.open) {
+      opened.current?.();
+      dialog.showModal();
+    } else if (!open && dialog.open) dialog.close();
+  }, [open]);
+  return ref;
+}
+
+function NewSessionDialog({
+  open,
+  busy,
+  close,
+  create,
+}: {
+  open: boolean;
+  busy: boolean;
+  close: () => void;
+  create: (title: string, talkingPoints: string) => void;
+}) {
+  const [title, setTitle] = useState("");
+  const [points, setPoints] = useState("");
+  const ref = useModal(open, () => {
+    setTitle("");
+    setPoints("");
+  });
+  return (
+    <dialog
+      ref={ref}
+      className="dialog wide"
+      aria-labelledby="new-session-title"
+      onCancel={(event) => {
+        event.preventDefault();
+        if (!busy) close();
+      }}
+      onClose={() => open && close()}
+    >
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (title.trim()) create(title.trim(), points);
+        }}
+      >
+        <h2 id="new-session-title" className="dialog-title">
+          New session
+        </h2>
+        <p className="dialog-text">
+          Starts paused. Go live when you are ready for questions.
+        </p>
+        <label className="label" htmlFor="new-session-name">
+          Title
+        </label>
+        <input
+          id="new-session-name"
+          className="input text"
+          value={title}
+          onChange={(event) => setTitle(event.target.value)}
+          maxLength={TITLE_MAX}
+          autoComplete="off"
+          autoFocus
+          required
+          disabled={busy}
+        />
+        <label className="label spaced" htmlFor="new-session-points">
+          Talking points <span className="optional">(optional)</span>
+        </label>
+        <textarea
+          id="new-session-points"
+          className="input notes"
+          rows={8}
+          value={points}
+          onChange={(event) => setPoints(event.target.value)}
+          maxLength={TALKING_POINTS_MAX}
+          disabled={busy}
+        />
+        <div className="dialog-actions">
+          <button
+            className="button"
+            type="button"
+            onClick={close}
+            disabled={busy}
+          >
+            Cancel
+          </button>
+          <button
+            className="button primary"
+            type="submit"
+            disabled={!title.trim() || busy}
+          >
+            {busy ? "Creating…" : "Create session"}
+          </button>
+        </div>
+      </form>
+    </dialog>
+  );
+}
+
+function TalkingPoints({
+  session,
+  busy,
+  save,
+  onDirtyChange,
+}: {
+  session: HostState["session"];
+  busy: boolean;
+  save: (title: string, talkingPoints: string) => Promise<boolean>;
+  onDirtyChange: (dirty: boolean) => void;
+}) {
+  const [baseline, setBaseline] = useState({
+    id: session.id,
+    title: session.title,
+    points: session.talkingPoints,
+  });
+  const [title, setTitle] = useState(session.title);
+  const [points, setPoints] = useState(session.talkingPoints);
+  const dirty = title !== baseline.title || points !== baseline.points;
+  // Follow server changes unless the host has unsaved edits.
+  useEffect(() => {
+    if (
+      session.id !== baseline.id ||
+      (!dirty &&
+        (session.title !== baseline.title ||
+          session.talkingPoints !== baseline.points))
+    ) {
+      setBaseline({
+        id: session.id,
+        title: session.title,
+        points: session.talkingPoints,
+      });
+      setTitle(session.title);
+      setPoints(session.talkingPoints);
+    }
+  }, [session.id, session.title, session.talkingPoints, baseline, dirty]);
+  useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
+  return (
+    <form
+      className="talking-points"
+      onSubmit={async (event) => {
+        event.preventDefault();
+        if (!dirty || !title.trim()) return;
+        if (await save(title.trim(), points))
+          setBaseline({ id: session.id, title: title.trim(), points });
+      }}
+    >
+      <label className="label" htmlFor="session-title-input">
+        Title
+      </label>
+      <input
+        id="session-title-input"
+        className="input text"
+        value={title}
+        onChange={(event) => setTitle(event.target.value)}
+        maxLength={TITLE_MAX}
+        autoComplete="off"
+        required
+      />
+      <label className="label spaced" htmlFor="talking-points">
+        Talking points
+      </label>
+      <p className="hint" id="talking-points-hint">
+        The agent answers audience questions from these notes only.
+      </p>
+      <textarea
+        id="talking-points"
+        className="input notes tall"
+        value={points}
+        onChange={(event) => setPoints(event.target.value)}
+        maxLength={TALKING_POINTS_MAX}
+        aria-describedby="talking-points-hint talking-points-count"
+        placeholder="Key points, facts, and links the agent may use…"
+      />
+      <div className="panel-bar">
+        <span id="talking-points-count" className="hint" aria-live="off">
+          {points.length.toLocaleString()} /{" "}
+          {TALKING_POINTS_MAX.toLocaleString()}
+          {dirty && " · Unsaved changes"}
+        </span>
+        <button
+          type="submit"
+          className="button primary"
+          disabled={!dirty || busy || !title.trim()}
+          data-dirty={dirty}
+        >
+          {busy ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </form>
+  );
+}
 
 function agentLabel(status: string) {
   const labels: Record<string, string> = {
@@ -35,6 +234,7 @@ function agentLabel(status: string) {
     paused: "Paused",
     retrying: "Retrying",
     "over-budget": "Out of budget",
+    elsewhere: "On another session",
   };
   return labels[status] || "Offline";
 }
@@ -93,16 +293,8 @@ function ResetDialog({
   close: () => void;
   reset: () => void;
 }) {
-  const ref = useRef<HTMLDialogElement>(null);
   const [confirmation, setConfirmation] = useState("");
-  useEffect(() => {
-    const dialog = ref.current;
-    if (!dialog) return;
-    if (open && !dialog.open) {
-      setConfirmation("");
-      dialog.showModal();
-    } else if (!open && dialog.open) dialog.close();
-  }, [open]);
+  const ref = useModal(open, () => setConfirmation(""));
   return (
     <dialog
       ref={ref}
@@ -125,15 +317,15 @@ function ResetDialog({
           Reset session?
         </h2>
         <p id="reset-description" className="dialog-text">
-          This permanently clears all questions, votes, replies, and
-          recommendations. Pending agent results are discarded.
+          This permanently clears this session’s questions, votes, replies,
+          and recommendations. The title and talking points are kept.
         </p>
         <label className="label" htmlFor="reset-confirm">
           Type RESET to confirm
         </label>
         <input
           id="reset-confirm"
-          className="input"
+          className="input code"
           value={confirmation}
           onChange={(event) => setConfirmation(event.target.value)}
           autoComplete="off"
@@ -324,8 +516,44 @@ function HostQuestion({
   );
 }
 
+function sessionUrl(id: string | null) {
+  return id ? `/host?session=${encodeURIComponent(id)}` : "/host";
+}
+
 export default function HostPage() {
-  const { data, error, refresh } = useLiveState<HostState>("/api/host/state");
+  // undefined until the URL has been read on the client.
+  const [sessionId, setSessionId] = useState<string | null | undefined>();
+  useEffect(() => {
+    const read = () =>
+      setSessionId(new URLSearchParams(location.search).get("session"));
+    read();
+    window.addEventListener("popstate", read);
+    return () => window.removeEventListener("popstate", read);
+  }, []);
+  const {
+    data: latest,
+    error,
+    refresh,
+  } = useLiveState<HostState>(
+    sessionId === undefined
+      ? null
+      : `/api/host/state${sessionId ? `?session=${encodeURIComponent(sessionId)}` : ""}`,
+  );
+  // Never act on a previous session's data while the next one loads.
+  const data =
+    latest && (!sessionId || latest.session.id === sessionId) ? latest : null;
+  useEffect(() => {
+    if (data && !sessionId)
+      history.replaceState(null, "", sessionUrl(data.session.id));
+  }, [data, sessionId]);
+  const [dirty, setDirty] = useState(false);
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
+  const [newOpen, setNewOpen] = useState(false);
   const [message, setMessage] = useState<{
     text: string;
     error: boolean;
@@ -339,7 +567,17 @@ export default function HostPage() {
   const tabRefs = useRef<Record<Tab, HTMLButtonElement | null>>({
     votes: null,
     recommended: null,
+    talking: null,
   });
+
+  function selectSession(id: string) {
+    if (data && id === data.session.id) return;
+    if (dirty && !confirm("Discard unsaved talking points?")) return;
+    setDirty(false);
+    history.pushState(null, "", sessionUrl(id));
+    setSessionId(id);
+    setMessage(null);
+  }
 
   const questions = useMemo(
     () =>
@@ -359,11 +597,8 @@ export default function HostPage() {
   const selected = questions.find(
     (q) => q.id === data?.event.selectedQuestionId && !q.hidden,
   );
-  const agentStatus = data?.event.agentPaused
-    ? "paused"
-    : data?.worker.stale
-      ? "disconnected"
-      : data?.worker.status || "disconnected";
+  const agentStatus = data?.agent.status || "disconnected";
+  const live = !!data?.session.live;
   const recommendation = data?.recommendation;
   const queue = (recommendation?.queue || []).flatMap((item) => {
     const question = questionMap.get(item.questionId);
@@ -372,19 +607,50 @@ export default function HostPage() {
       : [];
   });
 
-  async function control(payload: Control) {
-    if (!data) return;
+  async function control(
+    payload: Control & { title?: string; talkingPoints?: string },
+  ): Promise<Record<string, unknown> | null> {
+    if (!data) return null;
     setPending(payload.action + (payload.questionId || ""));
     setMessage(null);
     try {
-      await request("/api/host/control", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ generation: data.event.generation, ...payload }),
-      });
+      const result = await request<Record<string, unknown>>(
+        "/api/host/control",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(
+            payload.action === "create-session"
+              ? payload
+              : { generation: data.event.generation, ...payload },
+          ),
+        },
+      );
       if (payload.action === "reset") {
         setResetOpen(false);
         setMessage({ text: "Session reset.", error: false });
+      }
+      if (payload.action === "create-session") {
+        setNewOpen(false);
+        selectSession(String(result.sessionId));
+        setTab("votes");
+        setMessage({
+          text: "Session created. Go live when you are ready.",
+          error: false,
+        });
+      }
+      if (payload.action === "update-session")
+        setMessage({ text: "Saved.", error: false });
+      if (payload.action === "live") {
+        const paused = result.paused as { title: string } | null;
+        setMessage({
+          text: payload.value
+            ? paused
+              ? `Session is live. “${paused.title}” was paused.`
+              : "Session is live."
+            : "Session paused. The audience sees a waiting screen.",
+          error: false,
+        });
       }
       if (payload.action === "closing")
         setMessage({
@@ -392,6 +658,7 @@ export default function HostPage() {
           error: false,
         });
       refresh();
+      return result;
     } catch (error) {
       setMessage({
         text:
@@ -401,13 +668,14 @@ export default function HostPage() {
         error: true,
       });
       refresh();
+      return null;
     } finally {
       setPending("");
     }
   }
 
   function tabKey(event: React.KeyboardEvent) {
-    const order: Tab[] = ["votes", "recommended"];
+    const order: Tab[] = ["votes", "recommended", "talking"];
     const index = order.indexOf(tab);
     let next: Tab | undefined;
     if (event.key === "ArrowRight") next = order[(index + 1) % order.length];
@@ -436,7 +704,71 @@ export default function HostPage() {
         </a>
       </Header>
       <main id="main" tabIndex={-1} className="page wide">
-        <h1 className="sr-only">Host controls</h1>
+        {latest ? (
+          <section className="session-bar" aria-label="Session">
+            <div className="session-heading">
+              <h1 className="session-title">
+                {data?.session.title ?? "Loading…"}
+              </h1>
+              {data && (
+                <span
+                  className={`tag ${live ? "good" : ""}`}
+                  data-session-live={live}
+                >
+                  <span
+                    className={`status-dot ${live ? "good" : ""}`}
+                    aria-hidden="true"
+                  />
+                  {live ? "Live" : "Paused"}
+                </span>
+              )}
+            </div>
+            <div className="session-actions">
+              <label className="sr-only" htmlFor="session-select">
+                Switch session
+              </label>
+              <select
+                id="session-select"
+                className="select"
+                value={data?.session.id ?? sessionId ?? ""}
+                onChange={(event) => selectSession(event.target.value)}
+              >
+                {latest.sessions.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.title}
+                    {item.live ? " · Live" : ""} · {item.questionCount}{" "}
+                    {item.questionCount === 1 ? "question" : "questions"}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="button"
+                disabled={!data}
+                onClick={() => setNewOpen(true)}
+              >
+                <Icon name="plus" size={18} />
+                New session
+              </button>
+              <button
+                type="button"
+                className={`button ${live ? "" : "primary"}`}
+                disabled={!data || pending === "live"}
+                aria-describedby="live-hint"
+                onClick={() => control({ action: "live", value: !live })}
+              >
+                <Icon name={live ? "pause" : "play"} size={18} />
+                {live ? "Pause session" : "Go live"}
+              </button>
+              <span id="live-hint" className="sr-only">
+                Only one session can be live. Going live pauses any other live
+                session.
+              </span>
+            </div>
+          </section>
+        ) : (
+          <h1 className="sr-only">Host</h1>
+        )}
 
         <div className="notices" aria-live="polite">
           {message && (
@@ -451,7 +783,10 @@ export default function HostPage() {
 
         {!data ? (
           error ? (
-            <EmptyState title="Can’t connect">{error}</EmptyState>
+            <EmptyState title="Can’t load this session">
+              {error}{" "}
+              {sessionId && <a href="/host">Open the current session</a>}
+            </EmptyState>
           ) : (
             <EmptyState title="Loading session…" loading />
           )
@@ -515,6 +850,7 @@ export default function HostPage() {
                       [
                         ["votes", "By votes", visibleQuestions.length],
                         ["recommended", "Recommended", queue.length],
+                        ["talking", "Talking points", null],
                       ] as const
                     ).map(([value, label, count]) => (
                       <button
@@ -531,11 +867,11 @@ export default function HostPage() {
                         onClick={() => setTab(value)}
                       >
                         {label}
-                        <span className="count">{count}</span>
+                        {count !== null && <span className="count">{count}</span>}
                       </button>
                     ))}
                   </div>
-                  <div className="filters">
+                  <div className="filters" hidden={tab === "talking"}>
                     <label className="check">
                       <input
                         type="checkbox"
@@ -680,6 +1016,27 @@ export default function HostPage() {
                     </div>
                   )}
                 </div>
+
+                <div
+                  role="tabpanel"
+                  id="panel-talking"
+                  aria-labelledby="tab-talking"
+                  hidden={tab !== "talking"}
+                  className="panel"
+                >
+                  <TalkingPoints
+                    session={data.session}
+                    busy={pending === "update-session"}
+                    onDirtyChange={setDirty}
+                    save={async (title, talkingPoints) =>
+                      !!(await control({
+                        action: "update-session",
+                        title,
+                        talkingPoints,
+                      }))
+                    }
+                  />
+                </div>
               </section>
 
               <aside className="host-side" aria-label="Session controls">
@@ -736,7 +1093,11 @@ export default function HostPage() {
                     id="agent"
                     label="Agent"
                     description={
-                      data.event.agentPaused ? "Paused" : "Allowed to run"
+                      data.event.agentPaused
+                        ? "Paused"
+                        : live
+                          ? "Allowed to run"
+                          : "Runs while the session is live"
                     }
                     checked={!data.event.agentPaused}
                     disabled={pending === "agent"}
@@ -792,6 +1153,14 @@ export default function HostPage() {
         busy={pending === "reset"}
         close={() => setResetOpen(false)}
         reset={() => control({ action: "reset", confirmation: "RESET" })}
+      />
+      <NewSessionDialog
+        open={newOpen}
+        busy={pending === "create-session"}
+        close={() => setNewOpen(false)}
+        create={(title, talkingPoints) =>
+          control({ action: "create-session", title, talkingPoints })
+        }
       />
     </>
   );

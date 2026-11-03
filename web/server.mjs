@@ -77,8 +77,15 @@ for (const [channel, defaultPort, variable] of [
             (path === "/api/host/control" && method === "POST");
     if (!allowed)
       return reject(res, 404, "This route is unavailable on this listener.");
-    if (Number(req.headers["content-length"] || 0) > 8192)
-      return reject(res, 413, "Request body exceeds 8 KiB.");
+    // Host control carries session talking points; everything else stays small.
+    const maxBody =
+      channel === "host" && path === "/api/host/control" ? 256 * 1024 : 8192;
+    if (Number(req.headers["content-length"] || 0) > maxBody)
+      return reject(
+        res,
+        413,
+        `Request body exceeds ${Math.round(maxBody / 1024)} KiB.`,
+      );
     const peer = (req.socket.remoteAddress || "unknown").replace(
       /^::ffff:/,
       "",

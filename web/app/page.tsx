@@ -39,8 +39,11 @@ export default function AudiencePage() {
       ),
     [data?.questions, sort],
   );
+  const live = !!data?.session;
   const intakeClosed = !!(
-    data?.event.intakePaused || data?.event.intakeExhausted
+    !live ||
+    data?.event?.intakePaused ||
+    data?.event?.intakeExhausted
   );
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
@@ -116,12 +119,22 @@ export default function AudiencePage() {
     <>
       <Header connected={data ? !error : null} />
       <main id="main" tabIndex={-1} className="page narrow">
+        {data?.session && (
+          <p className="eyebrow" data-session-id={data.session.id}>
+            {data.session.title}
+          </p>
+        )}
         <h1 className="page-title">Ask a question</h1>
         <p className="page-intro">
           Anonymous. Vote for the questions you want answered.
         </p>
 
-        <form className="composer" onSubmit={submit} aria-label="New question">
+        <form
+          className="composer"
+          onSubmit={submit}
+          aria-label="New question"
+          hidden={!!data && !live}
+        >
           <label className="sr-only" htmlFor="question">
             Your question
           </label>
@@ -149,7 +162,7 @@ export default function AudiencePage() {
           <div className="composer-foot">
             <span id="question-hint" className="hint">
               {intakeClosed
-                ? data?.event.intakeExhausted
+                ? data?.event?.intakeExhausted
                   ? "The question limit has been reached. Voting is still open."
                   : "New questions are paused. Voting is still open."
                 : `${draft.length.toLocaleString()} / ${MAX_LENGTH.toLocaleString()}`}
@@ -204,6 +217,10 @@ export default function AudiencePage() {
             ) : (
               <EmptyState title="Loading questions…" loading />
             )
+          ) : !live ? (
+            <EmptyState title="No live session">
+              Questions open when the host starts a session.
+            </EmptyState>
           ) : questions.length === 0 ? (
             <EmptyState title="No questions yet">
               Be the first to ask.

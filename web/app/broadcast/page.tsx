@@ -5,7 +5,8 @@ import QRCode from "qrcode";
 import { Icon, Question, ThemeSwitcher, plural, useLiveState } from "../ui";
 
 type BroadcastState = {
-  event: { generation: string; audienceUrl: string };
+  session: { id: string; title: string } | null;
+  event: { generation: string | null; audienceUrl: string };
   question: Question | null;
 };
 
@@ -50,6 +51,7 @@ export default function BroadcastPage() {
         className="broadcast-stage"
         data-state={question ? "question" : "idle"}
         data-question-id={question?.id}
+        data-session-id={data?.session?.id}
       >
         <div aria-live="polite" aria-atomic="true" className="broadcast-live">
           {question ? (
@@ -70,7 +72,12 @@ export default function BroadcastPage() {
             </>
           ) : (
             <div className="broadcast-idle">
-              <h1 className="broadcast-title">Ask a question</h1>
+              {data?.session && (
+                <p className="broadcast-session">{data.session.title}</p>
+              )}
+              <h1 className="broadcast-title">
+                {data && !data.session ? "Starting soon" : "Ask a question"}
+              </h1>
               {url && <p className="broadcast-url">{displayUrl(url)}</p>}
               {qr && (
                 <img

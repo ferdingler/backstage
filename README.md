@@ -67,12 +67,15 @@ The agent command resolves a temporary session from `bedrock` outside containmen
 
 Follow [talk.md](talk.md). Use the opening invitation, check in at minute eight, and reserve minutes 12–15 for Q&A.
 
-1. Open **Host**, confirm the audience URL/QR code, and check the heartbeat.
-2. Invite questions and votes. Turn off **New questions** to pause intake; reading and voting remain usable.
-3. Turn off **Agent processing** to pause new work and invalidate late results. Host controls remain usable with the worker stopped, busy, or out of budget.
-4. At minute 12, press **Prepare closing Q&A**. Compare recommendations with plain vote ranking. Groups retain each member's votes.
-5. Select a question for broadcast, answer it, then mark it answered by the speaker. Hiding excludes it from broadcast; it remains raw agent input.
-6. To start over, open **Reset this session…** and type `RESET`. The new generation prevents earlier replies and recommendations from reappearing.
+1. Open **Host**. Pick a session from the switcher or create one with **New session**. Paste the talk's notes into **Talking points** and save. The audience sees a waiting screen until a session is live.
+2. Press **Go live**. Only one session is live at a time; going live pauses any other. Confirm the audience URL/QR code and check the agent heartbeat.
+3. Invite questions and votes. Turn off **Accept questions** to pause intake; reading and voting remain usable.
+4. Turn off **Agent** to pause new work and invalidate late results. Pausing the session does the same. Host controls remain usable with the worker stopped, busy, or out of budget.
+5. At minute 12, open **Recommended** and press **Recommend order**. Compare recommendations with plain vote ranking. Groups retain each member's votes.
+6. Select a question for broadcast, answer it, then mark it answered. Hiding excludes it from broadcast; it remains raw agent input.
+7. To start a session over, open **Reset session…** and type `RESET`. It clears that session's questions, votes, replies, and recommendations, and keeps its title and talking points. The new generation prevents earlier replies and recommendations from reappearing.
+
+The agent follows the live session. Talking points are stored with the session; the agent does not read them yet and still uses `talk.md`.
 
 Sample questions to enter through the audience page:
 

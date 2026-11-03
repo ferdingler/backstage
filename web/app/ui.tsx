@@ -13,27 +13,43 @@ export type Question = {
   hidden: boolean;
   selected: boolean;
 };
+export type SessionInfo = {
+  id: string;
+  title: string;
+  live: boolean;
+  createdAt: number;
+};
+export type EventState = {
+  generation: string;
+  intakePaused: boolean;
+  agentPaused: boolean;
+  intakeExhausted: boolean;
+  selectedQuestionId: string | null;
+  audienceUrl: string;
+  questionCap: number;
+};
+export type Recommendation = {
+  revision: number;
+  createdAt: number;
+  stale: boolean;
+  groups: { title: string; questionIds: string[] }[];
+  queue: { questionId: string; reason: string }[];
+};
+/** Audience view of the live session; `session` is null when none is live. */
 export type PublicState = {
-  event: {
-    generation: string;
-    intakePaused: boolean;
-    agentPaused: boolean;
-    intakeExhausted: boolean;
-    selectedQuestionId: string | null;
-    audienceUrl: string;
-    questionCap: number;
-  };
+  session: SessionInfo | null;
+  event: EventState | null;
+  questions: Question[];
+  agent: { status: string; lastSeenAt: number | null } | null;
+  recommendation: null;
+};
+export type HostState = {
+  session: SessionInfo & { talkingPoints: string };
+  sessions: (SessionInfo & { questionCount: number })[];
+  event: EventState;
   questions: Question[];
   agent: { status: string; lastSeenAt: number | null };
-  recommendation: null | {
-    revision: number;
-    createdAt: number;
-    stale: boolean;
-    groups: { title: string; questionIds: string[] }[];
-    queue: { questionId: string; reason: string }[];
-  };
-};
-export type HostState = PublicState & {
+  recommendation: Recommendation | null;
   activity: {
     id: string;
     at: number;
@@ -48,9 +64,13 @@ export type HostState = PublicState & {
     limit: number;
     closingReserve: number;
   };
-  worker: { status: string; lastSeenAt: number | null; stale: boolean };
+  worker: {
+    status: string;
+    lastSeenAt: number | null;
+    stale: boolean;
+    sessionId: string | null;
+  };
   revision: number;
-  boxLog: { status: string; message: string };
 };
 
 export class ApiError extends Error {
@@ -90,7 +110,8 @@ export async function request<T>(
   return body as T;
 }
 
-export function useLiveState<T>(url: string) {
+/** Polls `url`; pass null to wait without fetching. */
+export function useLiveState<T>(url: string | null) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
@@ -100,6 +121,7 @@ export function useLiveState<T>(url: string) {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let active: AbortController | undefined;
+    if (!url) return;
     const load = async (initial = false) => {
       if ((!initial && document.hidden) || stopped) return;
       active?.abort();
@@ -158,7 +180,10 @@ type IconName =
   | "moon"
   | "auto"
   | "external"
-  | "arrow";
+  | "arrow"
+  | "plus"
+  | "play"
+  | "pause";
 
 const iconPaths: Record<IconName, React.ReactNode> = {
   up: <path d="m6 15 6-6 6 6" />,
@@ -195,6 +220,9 @@ const iconPaths: Record<IconName, React.ReactNode> = {
     <path d="M14 4h6v6m0-6-9 9M10 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-4" />
   ),
   arrow: <path d="M5 12h14m-6-6 6 6-6 6" />,
+  plus: <path d="M12 5v14M5 12h14" />,
+  play: <path d="M7 5v14l11-7L7 5Z" />,
+  pause: <path d="M8 5v14M16 5v14" />,
 };
 
 export function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
@@ -284,7 +312,7 @@ export function Header({
               data-connection={connected ? "live" : "reconnecting"}
             >
               <span className="dot" aria-hidden="true" />
-              {connected ? "Live" : "Reconnecting"}
+              {connected ? "Connected" : "Reconnecting"}
             </span>
           )}
           <ThemeSwitcher />

@@ -22,7 +22,8 @@ backstage/
 │   ├── session.ts             # Session operations and read models
 │   ├── work.ts                # Agent work leases and model budget
 │   ├── validate.ts
-│   └── db.ts
+│   ├── db.ts                  # DynamoDB table access and transactions
+│   └── scripts/create-table.mjs
 ├── agent/                     # Python project root
 │   ├── pyproject.toml
 │   ├── uv.lock
@@ -59,7 +60,7 @@ Use builds, type checking, and manual browser, HTTP, and agent smoke checks appr
 - Keep original questions and authoritative vote totals in the web app. The agent can answer, propose groups, and recommend an order; it cannot invent votes or perform host operations.
 - Label agent replies and recommendations. An agent reply leaves the question eligible for the speaker to answer.
 - Raw submissions, including prompt-injection attempts, reach the agent as untrusted content. Render audience and model text safely as text. Hosts control what goes onto the broadcast.
-- Use short polling, one agent worker, and a persistent single-server web deployment for the first version. Store event state in SQLite under `web/`; keep the database outside the agent's filesystem grants.
+- Use short polling, one agent worker, and a persistent single-server web deployment for the first version. Store event state in one DynamoDB table that only the web app reaches; the agent gets no database credentials and goes through the agent API.
 - Keep host controls and agent-write APIs off public ingress. Use private access through an existing transport such as SSH, with no application login flow. A browser cookie or hidden URL grants no host or agent privileges.
 - Apply public API rate limits and bounded agent processing. Pausing the agent must leave the website and host controls usable.
 

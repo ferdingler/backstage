@@ -7,21 +7,21 @@ export const dynamic = "force-dynamic";
 
 /** One endpoint for every host action, selected by `action`. */
 export const POST = route({ origin: "host" }, ({ body }) =>
-  transaction(() => {
+  transaction(async () => {
     const action = body.action;
     if (action === "create-session") {
       fields(body, ["action", "title"], ["talkingPoints"]);
-      return { ok: true, ...session.create(body) };
+      return { ok: true, ...(await session.create(body)) };
     }
-    const s = session.byGeneration(body.generation);
+    const s = await session.byGeneration(body.generation);
     switch (action) {
       case "update-session":
         fields(body, ["generation", "action"], ["title", "talkingPoints"]);
-        session.update(s, body);
+        await session.update(s, body);
         break;
       case "live": {
         fields(body, ["generation", "action", "value"]);
-        const paused = session.setLive(s, boolean(body.value));
+        const paused = await session.setLive(s, boolean(body.value));
         return {
           ok: true,
           generation: s.generation,
@@ -30,30 +30,30 @@ export const POST = route({ origin: "host" }, ({ body }) =>
       }
       case "reset":
         fields(body, ["generation", "action", "confirmation"]);
-        return { ok: true, ...session.reset(s, body.confirmation) };
+        return { ok: true, ...(await session.reset(s, body.confirmation)) };
       case "intake":
         fields(body, ["generation", "action", "value"]);
-        session.setIntakePaused(s, boolean(body.value));
+        await session.setIntakePaused(s, boolean(body.value));
         break;
       case "agent":
         fields(body, ["generation", "action", "value"]);
-        session.setAgentPaused(s, boolean(body.value));
+        await session.setAgentPaused(s, boolean(body.value));
         break;
       case "select":
         fields(body, ["generation", "action", "questionId"]);
-        session.select(s, body.questionId);
+        await session.select(s, body.questionId);
         break;
       case "answered":
         fields(body, ["generation", "action", "questionId", "value"]);
-        session.markAnswered(s, body.questionId, boolean(body.value));
+        await session.markAnswered(s, body.questionId, boolean(body.value));
         break;
       case "hide":
         fields(body, ["generation", "action", "questionId", "value"]);
-        session.setHidden(s, body.questionId, boolean(body.value));
+        await session.setHidden(s, body.questionId, boolean(body.value));
         break;
       case "closing":
         fields(body, ["generation", "action"]);
-        session.requestClosing(s);
+        await session.requestClosing(s);
         break;
       default:
         fail(400, "UNKNOWN_ACTION", "Unknown host action.");

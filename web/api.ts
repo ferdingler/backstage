@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomBytes } from "node:crypto";
-import { db, config } from "./db";
+import { config, keys, store, transaction, ttl } from "./db";
 import { ApiError, fail, object, type Json } from "./validate";
 import routes from "./routes.json";
 
@@ -47,7 +47,7 @@ export function route(
         );
       if (policy.origin) checkOrigin(req, policy.origin);
       const who = policy.visitor
-        ? visitor(req, policy.visitor === "mint")
+        ? await visitor(req, policy.visitor === "mint")
         : undefined;
       if (policy.rate) rateLimit(req, policy.rate, who!.id);
       const body =
@@ -203,19 +203,16 @@ function rateLimit(
 const visitorCookie = "backstage_visitor";
 const visitorTtlSeconds = 6 * 3600;
 /** A server-issued browser cookie: identifies a browser session, not a person. */
-function visitor(
+async function visitor(
   req: NextRequest,
   mint: boolean,
-): { id: string; fresh: boolean } {
+): Promise<{ id: string; fresh: boolean }> {
   const cookie = req.cookies.get(visitorCookie)?.value;
-  if (
-    cookie &&
-    /^[a-f0-9]{64}$/.test(cookie) &&
-    db
-      .prepare("SELECT 1 FROM visitors WHERE id=? AND expires>?")
-      .get(cookie, Date.now())
-  )
-    return { id: cookie, fresh: false };
+  if (cookie && /^[a-f0-9]{64}$/.test(cookie)) {
+    const known = await store.get(...keys.visitor(cookie));
+    if (known && (known.expires as number) > Date.now())
+      return { id: cookie, fresh: false };
+  }
   if (!mint)
     fail(
       428,
@@ -223,13 +220,12 @@ function visitor(
       "Enable cookies and refresh this page before participating.",
     );
   limit(`cookie:${req.headers.get("x-backstage-ip")}`, config.cookiesPerIp);
-  db.prepare(
-    "DELETE FROM visitors WHERE expires<=? AND id NOT IN (SELECT visitor_id FROM votes)",
-  ).run(Date.now());
   const id = randomBytes(32).toString("hex");
-  db.prepare("INSERT INTO visitors(id,expires) VALUES(?,?)").run(
-    id,
-    Date.now() + visitorTtlSeconds * 1000,
+  const expires = Date.now() + visitorTtlSeconds * 1000;
+  const [pk, sk] = keys.visitor(id);
+  // Expired visitors are removed by TTL a day after their cookie lapses.
+  await transaction(async () =>
+    store.put({ pk, sk, expires, ttl: ttl(expires + 24 * 3600_000) }),
   );
   return { id, fresh: true };
 }

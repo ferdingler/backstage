@@ -1,11 +1,18 @@
 import { randomUUID } from "node:crypto";
 import {
-  db,
   config,
   board,
   activity,
   question,
+  questions as questionRows,
   transaction,
+  keys,
+  store,
+  sessionByGeneration,
+  updateSession,
+  updateQuestion,
+  talkingPointsOf,
+  type Item,
   type SessionRow,
   type WorkRow,
 } from "./db";
@@ -63,19 +70,29 @@ type WorkerRow = {
   heartbeat: number | null;
   session_id: string | null;
 };
-export function worker() {
-  const w = db
-    .prepare("SELECT * FROM worker WHERE singleton=1")
-    .get() as WorkerRow;
+const noWorker: WorkerRow = {
+  status: "disconnected",
+  heartbeat: null,
+  session_id: null,
+};
+export async function worker() {
+  const item = await store.get(...keys.worker);
+  const w: WorkerRow = {
+    status: (item?.status as string) ?? noWorker.status,
+    heartbeat: (item?.heartbeat as number | null) ?? null,
+    session_id: (item?.session_id as string | null) ?? null,
+  };
   const stale = !w.heartbeat || Date.now() - w.heartbeat > workerStaleMs;
   return { ...w, stale };
 }
-function setWorkerStatus(status: string) {
-  db.prepare("UPDATE worker SET status=? WHERE singleton=1").run(status);
+function updateWorker(change: Partial<WorkerRow>) {
+  return store.update(...keys.worker, () => change, { ...noWorker });
 }
 /** What the audience and host see about the agent for session `s`. */
-export function agentStatus(s: SessionRow) {
-  const w = worker();
+export function agentStatus(
+  s: SessionRow,
+  w: Awaited<ReturnType<typeof worker>>,
+) {
   return w.stale
     ? "disconnected"
     : w.session_id !== s.id
@@ -84,12 +101,14 @@ export function agentStatus(s: SessionRow) {
         ? "paused"
         : w.status;
 }
-export function heartbeat(s: SessionRow, status: unknown) {
+export async function heartbeat(s: SessionRow, status: unknown) {
   if (!workerStatuses.includes(status as string))
     fail(400, "INVALID_STATUS", "Unknown worker status.");
-  db.prepare(
-    "UPDATE worker SET status=?,heartbeat=?,session_id=? WHERE singleton=1",
-  ).run(status as string, Date.now(), s.id);
+  await updateWorker({
+    status: status as string,
+    heartbeat: Date.now(),
+    session_id: s.id,
+  });
   return {
     ok: true,
     generation: s.generation,
@@ -113,18 +132,20 @@ export function budget(s: SessionRow) {
     closingReserve: closingReserve(s),
   };
 }
-function recommendationRow(s: SessionRow) {
-  return db
-    .prepare("SELECT * FROM recommendations WHERE generation=?")
-    .get(s.generation) as
-    { revision: number; created_at: number; data: string } | undefined;
+type RecommendationRow = { revision: number; created_at: number; data: string };
+async function recommendationRow(
+  s: SessionRow,
+): Promise<RecommendationRow | undefined> {
+  return (await store.get(...keys.recommendation(s.generation))) as
+    | (Item & RecommendationRow)
+    | undefined;
 }
 /** A recommendation is stale once the board changed or its refresh failed. */
 function isStale(row: { revision: number } | undefined, s: SessionRow) {
   return !row || row.revision !== s.revision || !!s.recommendation_failed;
 }
-export function recommendation(s: SessionRow) {
-  const row = recommendationRow(s);
+export async function recommendation(s: SessionRow) {
+  const row = await recommendationRow(s);
   return row
     ? {
         ...JSON.parse(row.data),
@@ -137,70 +158,97 @@ export function recommendation(s: SessionRow) {
 
 // Lease lifecycle -----------------------------------------------------------
 
-/** Ends a lease: release its reservation and charge `calls`. */
-function settle(
+function updateWork(w: WorkRow, change: Partial<WorkRow>) {
+  return store.update(...keys.work(w.generation, w.id), () => change);
+}
+/**
+ * Ends a lease: release its reservation, charge `calls`, and free the single
+ * lease slot. Work from a reset generation has no session left to charge.
+ */
+async function settle(
   w: WorkRow,
   calls: number,
   status: "done" | "failed" | "expired",
   resultId: string | null = null,
 ) {
-  db.prepare(
-    "UPDATE work SET status=?,calls_used=?,result_id=? WHERE id=?",
-  ).run(status, calls, resultId, w.id);
-  db.prepare(
-    "UPDATE sessions SET budget_reserved=MAX(0,budget_reserved-?),budget_used=budget_used+? WHERE generation=?",
-  ).run(w.reservation, calls, w.generation);
+  await updateWork(w, { status, calls_used: calls, result_id: resultId });
+  const s = await sessionByGeneration(w.generation);
+  if (s)
+    await updateSession(s, (c) => ({
+      budget_reserved: Math.max(0, c.budget_reserved - w.reservation),
+      budget_used: c.budget_used + calls,
+    }));
+  const lease = await store.get(...keys.lease);
+  if (lease?.work_id === w.id)
+    await store.update(...keys.lease, () => ({
+      work_id: null,
+      generation: null,
+      expires: 0,
+    }));
 }
 /** Unfinished work: its questions back off and a recommendation goes stale. */
-function retryLater(w: WorkRow) {
-  for (const id of JSON.parse(w.question_ids) as string[])
-    db.prepare("UPDATE questions SET next_try=? WHERE id=?").run(
-      Date.now() + retryDelayMs,
-      id,
-    );
+async function retryLater(w: WorkRow) {
+  const s = await sessionByGeneration(w.generation);
+  if (!s) return;
+  for (const id of w.question_ids)
+    if (await store.get(...keys.question(w.generation, id)))
+      await updateQuestion(s, id, () => ({
+        next_try: Date.now() + retryDelayMs,
+      }));
   if (w.kind === "recommendation")
-    db.prepare(
-      "UPDATE sessions SET recommendation_failed=1 WHERE generation=?",
-    ).run(w.generation);
+    await updateSession(s, () => ({ recommendation_failed: 1 }));
 }
-/** Expires overdue leases, charging their full reservation. */
+/** Expires the overdue lease, if any, charging its full reservation. */
 export function expire() {
-  transaction(() => {
-    const stale = db
-      .prepare("SELECT * FROM work WHERE status='active' AND expires<=?")
-      .all(Date.now()) as WorkRow[];
-    for (const w of stale) {
-      settle(w, w.reservation, "expired");
-      retryLater(w);
-      activity(
-        w.generation,
-        "retry",
-        "Work lease expired; its full model reservation remains charged.",
-        w.id,
-      );
+  return transaction(async () => {
+    const lease = await store.get(...keys.lease);
+    if (!lease?.work_id || (lease.expires as number) > Date.now()) return;
+    const item = await store.get(
+      ...keys.work(lease.generation as string, lease.work_id as string),
+    );
+    const w = item as (Item & WorkRow) | undefined;
+    if (!w || w.status !== "active") {
+      await store.update(...keys.lease, () => ({
+        work_id: null,
+        generation: null,
+        expires: 0,
+      }));
+      return;
     }
+    await settle(w, w.reservation, "expired");
+    await retryLater(w);
+    activity(
+      w.generation,
+      "retry",
+      "Work lease expired; its full model reservation remains charged.",
+      w.id,
+    );
   });
 }
-export function find(s: SessionRow, value: unknown): WorkRow {
+export async function find(s: SessionRow, value: unknown): Promise<WorkRow> {
   const id = identifier(value);
-  const work = db
-    .prepare("SELECT * FROM work WHERE id=? AND generation=?")
-    .get(id, s.generation) as WorkRow | undefined;
+  const work = (await store.get(...keys.work(s.generation, id))) as
+    | (Item & WorkRow)
+    | undefined;
   if (!work) fail(404, "WORK_NOT_FOUND", "Work item not found.");
   return work;
 }
-function payload(w: WorkRow, s: SessionRow) {
+async function payload(
+  w: WorkRow,
+  s: SessionRow,
+  snapshot: Awaited<ReturnType<typeof board>>,
+) {
   return {
     id: w.id,
     sessionId: s.id,
     sessionTitle: s.title,
     // Host-written reference material for this session's answers.
-    talkingPoints: s.talking_points,
+    talkingPoints: await talkingPointsOf(s),
     generation: w.generation,
     pauseEpoch: w.pause_epoch,
     kind: w.kind,
-    questionIds: JSON.parse(w.question_ids),
-    questions: JSON.parse(w.snapshot),
+    questionIds: w.question_ids,
+    questions: snapshot,
     revision: w.revision,
     leaseExpiresAt: w.expires,
     maxCalls: w.reservation,
@@ -221,55 +269,61 @@ function requireActive(w: WorkRow, s: SessionRow) {
 }
 
 type Claim =
-  | { work: ReturnType<typeof payload> }
+  | { work: Awaited<ReturnType<typeof payload>> }
   | { work: null; reason: "paused" | "busy" | "idle" | "over-budget" };
 
 /** Leases the next piece of work for session `s`, if any is due and affordable. */
-export function claim(s: SessionRow): Claim {
-  return transaction((): Claim => {
+export function claim(s: SessionRow): Promise<Claim> {
+  return transaction(async (): Promise<Claim> => {
     if (blocked(s)) return { work: null, reason: "paused" };
     // One agent instance: at most one active work item across sessions.
-    if (db.prepare("SELECT 1 FROM work WHERE status='active' LIMIT 1").get())
+    if ((await store.get(...keys.lease))?.work_id)
       return { work: null, reason: "busy" };
-    const questions = board(s);
+    const [questions, rows, history, latest] = await Promise.all([
+      board(s),
+      questionRows(s),
+      store.query(keys.generation(s.generation), "W#"),
+      recommendationRow(s),
+    ]);
     const eligible = questions.filter((q) => !q.speakerAnswered);
-    const pending = db
-      .prepare(
-        `SELECT q.id FROM questions q LEFT JOIN replies r ON r.question_id=q.id WHERE q.generation=? AND r.question_id IS NULL AND q.attempts<? AND q.next_try<=? AND q.speaker_answered=0 ORDER BY q.created_at LIMIT ?`,
+    const now = Date.now();
+    const pending = rows
+      .filter(
+        (q) =>
+          !q.reply &&
+          q.attempts < maxAttempts &&
+          q.next_try <= now &&
+          !q.speaker_answered,
       )
-      .all(s.generation, maxAttempts, Date.now(), answerBatch)
-      .map((q) => q.id as string);
-    const recommendationAttempts = db
-      .prepare(
-        "SELECT COUNT(*) AS n FROM work WHERE kind='recommendation' AND revision=? AND generation=? AND closing=0",
-      )
-      .get(s.revision, s.generation)!.n as number;
+      .sort((a, b) => a.created_at - b.created_at)
+      .slice(0, answerBatch)
+      .map((q) => q.id);
+    const recommendationAttempts = history.filter(
+      (w) =>
+        w.kind === "recommendation" && w.revision === s.revision && !w.closing,
+    ).length;
     const dirty =
       eligible.length > 0 &&
       recommendationAttempts < maxAttempts &&
-      isStale(recommendationRow(s), s);
+      isStale(latest, s);
     const closing = !!s.closing_requested;
     const kind = closing
       ? "recommendation"
       : pending.length
         ? "answers"
-        : dirty &&
-            Date.now() - s.last_recommendation_attempt >=
-              recommendationIntervalMs
+        : dirty && now - s.last_recommendation_attempt >= recommendationIntervalMs
           ? "recommendation"
           : null;
     if (!kind) return { work: null, reason: "idle" };
     if (closing && !eligible.length) {
-      db.prepare("UPDATE sessions SET closing_requested=0 WHERE id=?").run(
-        s.id,
-      );
+      await updateSession(s, () => ({ closing_requested: 0 }));
       return { work: null, reason: "idle" };
     }
     // Only the closing run may spend the closing reserve.
     const ceiling = config.modelBudget - (closing ? 0 : closingReserve(s));
     if (s.budget_used + s.budget_reserved + config.runCalls > ceiling) {
-      if (worker().status !== "over-budget") {
-        setWorkerStatus("over-budget");
+      if ((await worker()).status !== "over-budget") {
+        await updateWorker({ status: "over-budget" });
         activity(
           s.generation,
           "budget-exhaustion",
@@ -280,43 +334,48 @@ export function claim(s: SessionRow): Claim {
     }
     const id = randomUUID();
     const ids = kind === "answers" ? pending : [];
-    const now = Date.now();
-    db.prepare(
-      "INSERT INTO work(id,generation,pause_epoch,kind,question_ids,snapshot,revision,expires,closing,reservation) VALUES(?,?,?,?,?,?,?,?,?,?)",
-    ).run(
+    const w: WorkRow = {
       id,
-      s.generation,
-      s.pause_epoch,
+      generation: s.generation,
+      pause_epoch: s.pause_epoch,
       kind,
-      JSON.stringify(ids),
-      JSON.stringify(questions),
-      s.revision,
-      now + config.leaseMs,
-      Number(closing),
-      config.runCalls,
+      question_ids: ids,
+      revision: s.revision,
+      expires: now + config.leaseMs,
+      closing: Number(closing),
+      status: "active",
+      reservation: config.runCalls,
+      calls_used: null,
+      result_id: null,
+      acknowledged: 0,
+    };
+    const [pk, sk] = keys.work(s.generation, id);
+    store.put({ ...w, pk, sk });
+    await store.update(
+      ...keys.lease,
+      () => ({ work_id: id, generation: s.generation, expires: w.expires }),
+      {},
     );
-    db.prepare(
-      "UPDATE sessions SET budget_reserved=budget_reserved+?,closing_requested=CASE WHEN ? THEN 0 ELSE closing_requested END,closing_consumed=CASE WHEN ? THEN 1 ELSE closing_consumed END WHERE id=?",
-    ).run(config.runCalls, Number(closing), Number(closing), s.id);
-    setWorkerStatus("processing");
-    if (kind === "recommendation")
-      db.prepare(
-        "UPDATE sessions SET last_recommendation_attempt=? WHERE id=?",
-      ).run(now, s.id);
+    await updateSession(s, (c) => ({
+      budget_reserved: c.budget_reserved + config.runCalls,
+      ...(closing ? { closing_requested: 0, closing_consumed: 1 } : {}),
+      ...(kind === "recommendation" ? { last_recommendation_attempt: now } : {}),
+    }));
+    await updateWorker({ status: "processing" });
     for (const q of ids)
-      db.prepare("UPDATE questions SET attempts=attempts+1 WHERE id=?").run(q);
+      await updateQuestion(s, q, (c) => ({ attempts: c.attempts + 1 }));
     activity(
       s.generation,
       "work-claimed",
       `${kind === "answers" ? `${ids.length} question(s)` : "Q&A recommendation"} claimed.`,
       id,
     );
-    return { work: payload(find(s, id), s) };
+    return { work: await payload(w, s, questions) };
   });
 }
 
 function parseReplies(w: WorkRow, raw: unknown[]) {
-  const ids: string[] = JSON.parse(w.question_ids);
+  const ids = w.question_ids;
   const seen = new Set<string>();
   const replies = raw.map((value) => {
     const reply = object(value);
@@ -343,7 +402,11 @@ function parseReplies(w: WorkRow, raw: unknown[]) {
     fail(400, "INVALID_RESULT", "Return one reply for every claimed question.");
   return replies;
 }
-function parseRecommendation(w: WorkRow, s: SessionRow, raw: unknown) {
+async function parseRecommendation(
+  w: WorkRow,
+  s: SessionRow,
+  raw: unknown,
+) {
   const rec = object(raw);
   fields(rec, ["revision", "groups", "queue"]);
   if (rec.revision !== w.revision || rec.revision !== s.revision)
@@ -364,7 +427,7 @@ function parseRecommendation(w: WorkRow, s: SessionRow, raw: unknown) {
       "Recommend at most eight groups and queue entries.",
     );
   const eligible = new Set(
-    board(s)
+    (await board(s))
       .filter((q) => !q.speakerAnswered)
       .map((q) => q.id),
   );
@@ -409,8 +472,8 @@ export function complete(
     "workId" | "resultId" | "callsUsed" | "replies" | "recommendation"
   >,
 ) {
-  return transaction(() => {
-    const w = find(s, input.workId);
+  return transaction(async () => {
+    const w = await find(s, input.workId);
     const resultId = identifier(input.resultId);
     const calls = integer(input.callsUsed, w.reservation);
     if (w.status === "done" && w.result_id === resultId)
@@ -426,9 +489,10 @@ export function complete(
       if (input.recommendation !== undefined || !Array.isArray(input.replies))
         fail(400, "INVALID_RESULT", "Expected question replies only.");
       for (const r of parseReplies(w, input.replies)) {
-        db.prepare(
-          "INSERT INTO replies(question_id,text,disposition,result_id) VALUES(?,?,?,?)",
-        ).run(r.id, r.text, r.disposition, resultId);
+        await question(s, r.id);
+        await updateQuestion(s, r.id, () => ({
+          reply: { text: r.text, disposition: r.disposition, result_id: resultId },
+        }));
         activity(
           s.generation,
           "reply-published",
@@ -440,13 +504,19 @@ export function complete(
     } else {
       if (input.replies !== undefined)
         fail(400, "INVALID_RESULT", "Expected a recommendation only.");
-      const data = parseRecommendation(w, s, input.recommendation);
-      db.prepare(
-        "INSERT OR REPLACE INTO recommendations(generation,revision,created_at,data) VALUES(?,?,?,?)",
-      ).run(w.generation, w.revision, Date.now(), JSON.stringify(data));
-      db.prepare("UPDATE sessions SET recommendation_failed=0 WHERE id=?").run(
-        s.id,
+      const data = await parseRecommendation(w, s, input.recommendation);
+      const [pk, sk] = keys.recommendation(w.generation);
+      await store.update(
+        pk,
+        sk,
+        () => ({
+          revision: w.revision,
+          created_at: Date.now(),
+          data: JSON.stringify(data),
+        }),
+        {},
       );
+      await updateSession(s, () => ({ recommendation_failed: 0 }));
       activity(
         s.generation,
         "queue-updated",
@@ -454,21 +524,21 @@ export function complete(
         w.id,
       );
     }
-    settle(w, calls, "done", resultId);
+    await settle(w, calls, "done", resultId);
     return { ok: true, duplicate: false };
   });
 }
 
 export function acknowledge(s: SessionRow, workId: unknown) {
-  return transaction(() => {
-    const w = find(s, workId);
+  return transaction(async () => {
+    const w = await find(s, workId);
     if (w.status !== "done")
       fail(
         409,
         "RESULT_REQUIRED",
         "Publish the result before acknowledging work.",
       );
-    db.prepare("UPDATE work SET acknowledged=1 WHERE id=?").run(w.id);
+    await updateWork(w, { acknowledged: 1 });
     return { ok: true };
   });
 }
@@ -478,14 +548,14 @@ export function abandon(
   s: SessionRow,
   input: Fields<"workId" | "callsUsed" | "reason">,
 ) {
-  return transaction(() => {
-    const w = find(s, input.workId);
+  return transaction(async () => {
+    const w = await find(s, input.workId);
     const calls = integer(input.callsUsed, w.reservation);
     if (!["timeout", "error", "cancelled"].includes(input.reason as string))
       fail(400, "INVALID_REASON", "Unknown failure reason.");
     if (w.status !== "active") return { ok: true };
-    settle(w, calls, "failed");
-    retryLater(w);
+    await settle(w, calls, "failed");
+    await retryLater(w);
     activity(
       s.generation,
       input.reason === "timeout" ? "timeout" : "retry",
@@ -506,15 +576,15 @@ export function report(
   s: SessionRow,
   input: Fields<"kind" | "workId" | "questionId" | "message">,
 ) {
-  return transaction(() => {
+  return transaction(async () => {
     if (typeof input.kind !== "string" || !activitySummaries[input.kind])
       fail(400, "INVALID_KIND", "Unknown activity kind.");
     const workId =
-      input.workId === undefined ? undefined : find(s, input.workId).id;
+      input.workId === undefined ? undefined : (await find(s, input.workId)).id;
     const questionId =
       input.questionId === undefined
         ? undefined
-        : question(s, input.questionId);
+        : (await question(s, input.questionId)).id;
     if (input.message !== undefined) text(input.message, 240);
     activity(
       s.generation,

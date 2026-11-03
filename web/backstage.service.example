@@ -6,7 +6,8 @@ After=network.target
 Type=simple
 WorkingDirectory=%h/workplace/backstage/web
 Environment=NODE_ENV=production
-Environment=BACKSTAGE_DB=data/backstage.sqlite
+Environment=BACKSTAGE_TABLE=backstage
+Environment=AWS_PROFILE=bedrock
 # Create this private environment file using the names in .env.example.
 EnvironmentFile=-%h/.config/backstage/web.env
 ExecStart=/usr/bin/env node server.mjs

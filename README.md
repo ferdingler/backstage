@@ -8,7 +8,7 @@ The app owns original questions, votes, and speaker actions. Agent replies and r
 
 ## Start the demo
 
-Prerequisites: Linux ARM64 with working unprivileged user/mount/process namespaces, Node.js 22.13 or newer, npm, uv, git, Rust/Cargo, AWS CLI v2, and a working `bedrock` profile with model access in `us-west-2`. The Isengard instructions also require Ada. Box's Linux support is experimental. This configuration targets that platform; a Mac needs separate runtime grants and a platform rehearsal.
+Prerequisites: Linux ARM64 with working unprivileged user/mount/process namespaces, Node.js 22.13 or newer, npm, uv, git, Rust/Cargo, AWS CLI v2, and a working `bedrock` profile with model access in `us-west-2`. The web app stores its state in a DynamoDB table in the same account. The Isengard instructions also require Ada. Box's Linux support is experimental. This configuration targets that platform; a Mac needs separate runtime grants and a platform rehearsal.
 
 Install from the component lockfiles:
 
@@ -20,6 +20,12 @@ cd ../agent
 uv sync --frozen
 cd ..
 uv run --project agent python box/configure.py
+```
+
+Create the DynamoDB table once. It uses on-demand capacity, deletion protection, point-in-time recovery, and TTL; rerunning it is safe:
+
+```sh
+cd web && AWS_PROFILE=bedrock npm run db:create
 ```
 
 Build the pinned Box reference once. Keep its three binaries together:
@@ -48,7 +54,7 @@ Start these in separate terminals, from the repository root:
 
 ```sh
 # Terminal 1: one persistent web process, three loopback listeners.
-cd web && npm start
+cd web && AWS_PROFILE=bedrock npm start
 
 # Terminal 2: agent contained by Box; Ctrl-C stops the worker.
 # Without --session it follows whichever session is live. The host page
@@ -92,14 +98,16 @@ The activity panel shows application events, not Box enforcement evidence. Use `
 
 ## Configuration and boundaries
 
-Limit defaults live in `web/db.ts`, port defaults in `web/server.mjs`, origin defaults in `web/api.ts`, and which listener serves each route in `web/routes.json`. `web/.env.example` lists startup variables. Export web overrides before starting the server. This is one process and one SQLite database, not a serverless or multi-instance app.
+Limit defaults live in `web/db.ts`, port defaults in `web/server.mjs`, origin defaults in `web/api.ts`, and which listener serves each route in `web/routes.json`. `web/.env.example` lists startup variables. Export web overrides before starting the server. State lives in one DynamoDB table. Several web processes may share it: each operation commits its changed items in one DynamoDB transaction, conditioned on the versions it read, and retries on conflict.
 
 | Setting | Default |
 | --- | --- |
 | `PUBLIC_PORT`, `HOST_PORT`, `AGENT_PORT` | `3000`, `3001`, `3003` |
 | `AUDIENCE_URL` | `http://127.0.0.1:3000` |
 | `PUBLIC_ORIGINS`, `HOST_ORIGINS` | Exact local audience / host origins |
-| `BACKSTAGE_DB` | `data/backstage.sqlite`, relative to `web/` |
+| `BACKSTAGE_TABLE` | `backstage` |
+| `AWS_PROFILE`, `AWS_REGION` | AWS SDK defaults; the table's account and region |
+| `DYNAMODB_ENDPOINT` | Unset; set to use DynamoDB Local |
 | `QUESTION_CAP` | 200 questions |
 | `QUESTION_RATE`, `VOTE_RATE`, `READ_RATE` | 5 / 30 / 60 per browser per minute |
 | `COOKIE_IP_RATE`, `WRITE_IP_RATE`, `WRITE_GLOBAL_RATE` | 120 / 300 / 300 per minute |
@@ -133,7 +141,7 @@ To retain these URLs after restarting the web process, start it from `web/` with
 AUDIENCE_URL=https://fdingler-backstage.w.tunnels.lab.aws.dev \
 PUBLIC_ORIGINS=http://127.0.0.1:3010,https://fdingler-backstage.w.tunnels.lab.aws.dev \
 HOST_ORIGINS=https://fdingler-backstage-host.w.tunnels.lab.aws.dev \
-TRUSTED_PROXY_IP=127.0.0.1 npm start
+TRUSTED_PROXY_IP=127.0.0.1 AWS_PROFILE=bedrock npm start
 ```
 
 Use SSH forwarding from the presenter machine. Start transports outside Box:
@@ -158,9 +166,9 @@ Public HTTPS requires an authorized host, domain/DNS, TLS setup, and SSH access.
 - **Worker failure:** restart `box/run.py`. A live lease remains busy until completion or expiry. Expiry charges its full reservation conservatively. Published replies remain once.
 - **Provider/service error:** the worker backs off, reports retrying/disconnected, and retries each question at most twice. Pause it and use the vote queue if needed.
 - **Budget exhaustion:** normal work stops; the closing reserve remains available. Host controls and audience reads continue.
-- **Web restart:** stop/start Node. SQLite preserves the event, leases, and budget. The worker reconnects; polling backs off without erasing content.
-- **Backup:** stop worker and web, then copy `web/data/` to private storage, including any SQLite `-wal`/`-shm` files.
-- **Reset:** use the host's confirmed reset. Do not delete files beneath a running SQLite process.
+- **Web restart:** stop/start Node. DynamoDB preserves the event, leases, and budget. The worker reconnects; polling backs off without erasing content.
+- **Backup:** the table has point-in-time recovery. Restore to a new table and point `BACKSTAGE_TABLE` at it.
+- **Reset:** use the host's confirmed reset. It moves the session to a new generation and then deletes the old generation's items.
 - **Shutdown:** Ctrl-C worker, web, log viewer, and SSH/Caddy processes. Remove Box state/scratch only after stopping; retain decision records needed for the talk.
 
 ## Service contract

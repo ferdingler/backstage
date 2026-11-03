@@ -3,16 +3,20 @@
 import { useMemo, useState } from "react";
 import {
   AgentReply,
-  Brand,
   EmptyState,
+  Header,
   Icon,
+  Notice,
   PublicState,
   QuestionStatus,
+  plural,
   request,
-  statusLabel,
   timeLabel,
+  useAutoClear,
   useLiveState,
 } from "./ui";
+
+const MAX_LENGTH = 1000;
 
 export default function AudiencePage() {
   const { data, error, refresh, setData } =
@@ -22,6 +26,7 @@ export default function AudiencePage() {
     text: string;
     error: boolean;
   } | null>(null);
+  useAutoClear(message, setMessage);
   const [submitting, setSubmitting] = useState(false);
   const [voting, setVoting] = useState<Set<string>>(new Set());
   const [sort, setSort] = useState<"votes" | "newest">("votes");
@@ -29,20 +34,18 @@ export default function AudiencePage() {
     () =>
       [...(data?.questions || [])].sort((a, b) =>
         sort === "votes"
-          ? b.votes - a.votes ||
-            new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-          : new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+          ? b.votes - a.votes || a.createdAt - b.createdAt
+          : b.createdAt - a.createdAt,
       ),
     [data?.questions, sort],
   );
-  const intakeClosed = data?.event.intakePaused || data?.event.intakeExhausted;
-  const agentStatus = data?.event.agentPaused
-    ? "paused"
-    : data?.agent.status || "disconnected";
+  const intakeClosed = !!(
+    data?.event.intakePaused || data?.event.intakeExhausted
+  );
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (submitting || !draft.trim()) return;
+    if (submitting || !draft.trim() || intakeClosed) return;
     setSubmitting(true);
     setMessage(null);
     try {
@@ -52,10 +55,7 @@ export default function AudiencePage() {
         body: JSON.stringify({ text: draft }),
       });
       setDraft("");
-      setMessage({
-        text: "Your question is in. The room can vote for it now.",
-        error: false,
-      });
+      setMessage({ text: "Question submitted.", error: false });
       refresh();
     } catch (error) {
       setMessage({
@@ -113,198 +113,142 @@ export default function AudiencePage() {
   }
 
   return (
-    <div className="shell">
-      <header className="topbar">
-        <Brand />
-        <span className="topbar-label">
-          A LIVE EXPERIMENT IN AGENT BOUNDARIES
-        </span>
-        <span className={`status-pill ${error ? "warn" : "good"}`}>
-          <span className="dot" />
-          {error ? "Reconnecting" : "Live Q&A"}
-        </span>
-      </header>
-      <main>
-        <section className="hero" aria-labelledby="page-title">
-          <div>
-            <div className="eyebrow">Your curiosity. The conversation.</div>
-            <h1 id="page-title">
-              A good question
-              <br />
-              changes <em>the room.</em>
-            </h1>
+    <>
+      <Header connected={data ? !error : null} />
+      <main id="main" tabIndex={-1} className="page narrow">
+        <h1 className="page-title">Ask a question</h1>
+        <p className="page-intro">
+          Anonymous. Vote for the questions you want answered.
+        </p>
+
+        <form className="composer" onSubmit={submit} aria-label="New question">
+          <label className="sr-only" htmlFor="question">
+            Your question
+          </label>
+          <textarea
+            id="question"
+            name="question"
+            className="textarea"
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (
+                event.key === "Enter" &&
+                (event.metaKey || event.ctrlKey) &&
+                !event.nativeEvent.isComposing
+              )
+                event.currentTarget.form?.requestSubmit();
+            }}
+            maxLength={MAX_LENGTH}
+            rows={3}
+            placeholder="Type your question…"
+            required
+            disabled={submitting || intakeClosed}
+            aria-describedby="question-hint"
+          />
+          <div className="composer-foot">
+            <span id="question-hint" className="hint">
+              {intakeClosed
+                ? data?.event.intakeExhausted
+                  ? "The question limit has been reached. Voting is still open."
+                  : "New questions are paused. Voting is still open."
+                : `${draft.length.toLocaleString()} / ${MAX_LENGTH.toLocaleString()}`}
+            </span>
+            <button
+              className="button primary"
+              type="submit"
+              disabled={!data || submitting || !draft.trim() || intakeClosed}
+            >
+              {submitting ? "Sending…" : "Submit"}
+            </button>
           </div>
-          <p className="hero-note">
-            <strong>Meet Backstage, our Q&A agent.</strong>Ask about the talk,
-            vote for a question, or try to distract the agent. The speaker has
-            the final say.
-          </p>
-        </section>
-        <div className="audience-grid">
-          <aside className="composer">
-            <h2>What’s on your mind?</h2>
-            <p className="composer-intro">
-              A genuine question or a clever distraction.
-              <br />
-              Let’s see how Backstage responds.
-            </p>
-            <form onSubmit={submit}>
-              <label className="field-label" htmlFor="question">
-                Your question
-              </label>
-              <textarea
-                id="question"
-                className="question-input"
-                value={draft}
-                onChange={(event) => setDraft(event.target.value)}
-                maxLength={1000}
-                placeholder="What happens when an agent tries to step outside its boundaries?"
-                required
-                disabled={submitting}
-                aria-describedby="question-limit"
-              />
-              <div className="field-foot" id="question-limit">
-                <span>No name needed.</span>
-                <span>{draft.length} / 1,000</span>
-              </div>
+        </form>
+
+        <div className="notices" aria-live="polite">
+          {message && (
+            <Notice tone={message.error ? "error" : "info"}>
+              {message.text}
+            </Notice>
+          )}
+          {error && data && (
+            <Notice tone="error">{error} Showing the last update.</Notice>
+          )}
+        </div>
+
+        <section className="section" aria-labelledby="questions-title">
+          <div className="section-head">
+            <h2 id="questions-title" className="section-title">
+              {data ? plural(questions.length, "question") : "Questions"}
+            </h2>
+            <div className="segmented" role="group" aria-label="Sort questions">
               <button
-                className="button primary full"
-                type="submit"
-                disabled={
-                  !data || submitting || !draft.trim() || !!intakeClosed
-                }
+                type="button"
+                aria-pressed={sort === "votes"}
+                onClick={() => setSort("votes")}
               >
-                {submitting
-                  ? "Sending your question…"
-                  : intakeClosed
-                    ? "Questions are paused"
-                    : "Send to Backstage"}
-                {!submitting && !intakeClosed && (
-                  <Icon name="arrow" size={16} />
-                )}
+                Top
               </button>
-            </form>
-            {data?.event.intakeExhausted && (
-              <p className="message">
-                The question board is full for this session. You can still vote
-                for the questions you want to hear.
-              </p>
-            )}
-            {data?.event.intakePaused && !data.event.intakeExhausted && (
-              <p className="message">
-                The speaker has paused new questions. You can still read and
-                vote.
-              </p>
-            )}
-            {message && (
-              <p
-                className={`message ${message.error ? "error" : ""}`}
-                role={message.error ? "alert" : "status"}
+              <button
+                type="button"
+                aria-pressed={sort === "newest"}
+                onClick={() => setSort("newest")}
               >
-                {message.text}
-              </p>
-            )}
-            <div className="composer-footer">
-              <Icon name="lock" size={12} />
-              <p>
-                Anonymous participation. A browser cookie remembers your votes
-                for this session.
-              </p>
+                New
+              </button>
             </div>
-          </aside>
-          <section aria-labelledby="questions-title">
-            <div className="feed-heading">
-              <h2 id="questions-title">
-                The room is asking{" "}
-                <span className="count">{questions.length}</span>
-              </h2>
-              <div className="segmented" aria-label="Question order">
-                <button
-                  className={sort === "votes" ? "active" : ""}
-                  aria-pressed={sort === "votes"}
-                  onClick={() => setSort("votes")}
-                >
-                  Top voted
-                </button>
-                <button
-                  className={sort === "newest" ? "active" : ""}
-                  aria-pressed={sort === "newest"}
-                  onClick={() => setSort("newest")}
-                >
-                  Newest
-                </button>
-              </div>
-            </div>
-            {error && (
-              <p className="message error connection-notice" role="status">
-                {error} Your current question board is still here.
-              </p>
-            )}
-            {data && (
-              <div className="question-meta" style={{ marginBottom: 18 }}>
-                <span
-                  className={`status-pill ${agentStatus === "processing" || agentStatus === "idle" ? "good" : "neutral"}`}
-                >
-                  <span className="dot" />
-                  {statusLabel(agentStatus)}
-                </span>
-                <span>Replies don’t close questions for the speaker.</span>
-              </div>
-            )}
-            {!data ? (
-              <EmptyState title="Joining the conversation…" loading>
-                Getting the latest questions from the room.
-              </EmptyState>
-            ) : questions.length === 0 ? (
-              <EmptyState title="Every conversation starts somewhere.">
-                Ask the first question. Backstage will take it from here.
-              </EmptyState>
+          </div>
+
+          {!data ? (
+            error ? (
+              <EmptyState title="Can’t connect">{error}</EmptyState>
             ) : (
-              <div>
-                {questions.map((question) => (
-                  <article
-                    key={question.id}
-                    className={`question-card ${question.selected ? "selected" : ""} ${question.speakerAnswered ? "answered" : ""}`}
-                    aria-label={`Question: ${question.text}`}
-                  >
-                    <div className="question-main">
-                      <button
-                        className={`vote-button ${question.voted ? "voted" : ""}`}
-                        aria-label={`${question.voted ? "Remove vote from" : "Vote for"}: ${question.text}`}
-                        aria-pressed={question.voted}
-                        disabled={voting.has(question.id)}
-                        onClick={() => vote(question.id, !question.voted)}
-                      >
-                        <Icon name="up" />
-                        <span>{question.votes}</span>
-                      </button>
-                      <div className="question-content">
-                        <div className="question-meta">
-                          <time
-                            dateTime={new Date(
-                              question.createdAt,
-                            ).toISOString()}
-                          >
-                            {timeLabel(question.createdAt)}
-                          </time>
-                          <span aria-hidden="true">·</span>
-                          <QuestionStatus question={question} />
-                        </div>
-                        <h3 className="question-text">{question.text}</h3>
+              <EmptyState title="Loading questions…" loading />
+            )
+          ) : questions.length === 0 ? (
+            <EmptyState title="No questions yet">
+              Be the first to ask.
+            </EmptyState>
+          ) : (
+            <ol className="list" aria-labelledby="questions-title">
+              {questions.map((question) => (
+                <li
+                  key={question.id}
+                  className={`item ${question.selected ? "is-selected" : ""} ${question.speakerAnswered ? "is-answered" : ""}`}
+                  data-question-id={question.id}
+                  data-votes={question.votes}
+                  data-voted={question.voted}
+                >
+                  <article className="item-row voteable" aria-label={question.text}>
+                    <button
+                      type="button"
+                      className="vote"
+                      aria-pressed={question.voted}
+                      aria-label={`${question.voted ? "Remove your vote" : "Vote"} for “${question.text}”. ${plural(question.votes, "vote")}.`}
+                      disabled={voting.has(question.id)}
+                      onClick={() => vote(question.id, !question.voted)}
+                    >
+                      <Icon name="up" size={22} />
+                      <span className="vote-count">{question.votes}</span>
+                    </button>
+                    <div className="item-body">
+                      <p className="item-text">{question.text}</p>
+                      <div className="meta">
+                        <time
+                          dateTime={new Date(question.createdAt).toISOString()}
+                        >
+                          {timeLabel(question.createdAt)}
+                        </time>
+                        <QuestionStatus question={question} />
                       </div>
                     </div>
                     <AgentReply question={question} />
                   </article>
-                ))}
-              </div>
-            )}
-          </section>
-        </div>
+                </li>
+              ))}
+            </ol>
+          )}
+        </section>
       </main>
-      <footer className="footer">
-        <span>Built for questions. Open to distractions.</span>
-        <span>Backstage · Strands + Box</span>
-      </footer>
-    </div>
+    </>
   );
 }

@@ -80,8 +80,8 @@ export async function request<T>(
     const message =
       body?.error?.message ||
       (response.status === 429
-        ? "A little too fast. Please try again shortly."
-        : "We couldn’t reach Backstage. Please try again.");
+        ? "Too many requests. Please try again shortly."
+        : "Couldn’t reach the server. Please try again.");
     throw new ApiError(
       retryAfter ? `${message} Try again in ${retryAfter}s.` : message,
       retryAfter,
@@ -147,65 +147,57 @@ export function useLiveState<T>(url: string) {
   return { data, error, refresh, setData };
 }
 
-export function Icon({
-  name,
-  size = 16,
-}: {
-  name:
-    | "arrow"
-    | "up"
-    | "spark"
-    | "lock"
-    | "question"
-    | "screen"
-    | "external"
-    | "check"
-    | "pause";
-  size?: number;
-}) {
-  const paths: Record<string, React.ReactNode> = {
-    arrow: (
-      <>
-        <path d="M4 12h15M13 6l6 6-6 6" />
-      </>
-    ),
-    up: <path d="m6 14 6-6 6 6" />,
-    spark: (
-      <>
-        <path d="m12 3 2.4 6.6L21 12l-6.6 2.4L12 21l-2.4-6.6L3 12l6.6-2.4L12 3Z" />
-        <path d="M20 3v4m-2-2h4" />
-      </>
-    ),
-    lock: (
-      <>
-        <rect x="5" y="10" width="14" height="11" rx="2" />
-        <path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2" />
-      </>
-    ),
-    question: (
-      <>
-        <path d="M21 11a9 9 0 0 1-9 9H4l-2 2v-11a9 9 0 1 1 19 0Z" />
-        <path d="M9 8a3 3 0 0 1 6 0c0 2-3 2-3 4m0 3h.01" />
-      </>
-    ),
-    screen: (
-      <>
-        <rect x="3" y="3" width="18" height="13" rx="2" />
-        <path d="M8 21h8m-4-5v5" />
-      </>
-    ),
-    external: (
-      <>
-        <path d="M14 3h7v7m0-7L10 14M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4" />
-      </>
-    ),
-    check: <path d="m5 12 4 4L19 6" />,
-    pause: (
-      <>
-        <path d="M8 5v14M16 5v14" />
-      </>
-    ),
-  };
+
+type IconName =
+  | "up"
+  | "check"
+  | "screen"
+  | "hidden"
+  | "spark"
+  | "sun"
+  | "moon"
+  | "auto"
+  | "external"
+  | "arrow";
+
+const iconPaths: Record<IconName, React.ReactNode> = {
+  up: <path d="m6 15 6-6 6 6" />,
+  check: <path d="m5 12.5 4.5 4.5L19 7" />,
+  screen: (
+    <>
+      <rect x="3" y="4" width="18" height="12" rx="2" />
+      <path d="M8 20h8m-4-4v4" />
+    </>
+  ),
+  hidden: (
+    <>
+      <path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c5 0 9 4.5 10 7a12 12 0 0 1-3 4.2M6.6 6.6A12 12 0 0 0 2 12c1 2.5 5 7 10 7a9.8 9.8 0 0 0 5.4-1.6" />
+      <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" />
+    </>
+  ),
+  spark: (
+    <path d="M12 3.5 13.9 10l6.6 2-6.6 2L12 20.5 10.1 14l-6.6-2 6.6-2L12 3.5Z" />
+  ),
+  sun: (
+    <>
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+    </>
+  ),
+  moon: <path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z" />,
+  auto: (
+    <>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M12 3.5v17a8.5 8.5 0 0 0 0-17Z" fill="currentColor" />
+    </>
+  ),
+  external: (
+    <path d="M14 4h6v6m0-6-9 9M10 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-4" />
+  ),
+  arrow: <path d="M5 12h14m-6-6 6 6-6 6" />,
+};
+
+export function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
   return (
     <svg
       width={size}
@@ -213,24 +205,92 @@ export function Icon({
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth="1.6"
+      strokeWidth="1.8"
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"
+      focusable="false"
     >
-      {paths[name]}
+      {iconPaths[name]}
     </svg>
   );
 }
 
-export function Brand({ href = "/" }: { href?: string }) {
+type Theme = "system" | "light" | "dark";
+const themes: { value: Theme; label: string; icon: IconName }[] = [
+  { value: "system", label: "System theme", icon: "auto" },
+  { value: "light", label: "Light theme", icon: "sun" },
+  { value: "dark", label: "Dark theme", icon: "moon" },
+];
+
+export function ThemeSwitcher() {
+  const [theme, setTheme] = useState<Theme>("system");
+  useEffect(() => {
+    const current = document.documentElement.dataset.theme;
+    if (current === "light" || current === "dark") setTheme(current);
+  }, []);
+  function choose(next: Theme) {
+    setTheme(next);
+    if (next === "system") delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = next;
+    try {
+      if (next === "system") localStorage.removeItem("theme");
+      else localStorage.setItem("theme", next);
+    } catch {
+      // Storage can be unavailable; the choice still applies to this page.
+    }
+  }
   return (
-    <a className="brand" href={href} aria-label="Backstage home">
-      <span className="brand-mark" aria-hidden="true">
-        b.
-      </span>
-      backstage
-    </a>
+    <div className="theme-switcher" role="group" aria-label="Color theme">
+      {themes.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          aria-label={option.label}
+          aria-pressed={theme === option.value}
+          title={option.label}
+          data-theme-option={option.value}
+          onClick={() => choose(option.value)}
+        >
+          <Icon name={option.icon} size={18} />
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export function Header({
+  label,
+  connected,
+  children,
+}: {
+  label?: string;
+  connected: boolean | null;
+  children?: React.ReactNode;
+}) {
+  return (
+    <header className="header">
+      <div className="header-inner">
+        <div className="header-title">
+          <span className="wordmark">Backstage</span>
+          {label && <span className="header-label">{label}</span>}
+        </div>
+        <div className="header-actions">
+          {children}
+          {connected !== null && (
+            <span
+              className={`connection ${connected ? "" : "offline"}`}
+              role="status"
+              data-connection={connected ? "live" : "reconnecting"}
+            >
+              <span className="dot" aria-hidden="true" />
+              {connected ? "Live" : "Reconnecting"}
+            </span>
+          )}
+          <ThemeSwitcher />
+        </div>
+      </div>
+    </header>
   );
 }
 
@@ -244,15 +304,28 @@ export function EmptyState({
   loading?: boolean;
 }) {
   return (
-    <div className="empty-state">
-      {loading ? (
-        <div className="loading-bar" />
-      ) : (
-        <Icon name="question" size={28} />
-      )}
-      <h3>{title}</h3>
-      {children && <p>{children}</p>}
+    <div className="empty" role={loading ? "status" : undefined}>
+      {loading && <div className="loading-bar" aria-hidden="true" />}
+      <p className="empty-title">{title}</p>
+      {children && <p className="empty-text">{children}</p>}
     </div>
+  );
+}
+
+export function Notice({
+  tone = "info",
+  children,
+}: {
+  tone?: "info" | "error";
+  children: React.ReactNode;
+}) {
+  return (
+    <p
+      className={`notice ${tone}`}
+      role={tone === "error" ? "alert" : "status"}
+    >
+      {children}
+    </p>
   );
 }
 
@@ -263,54 +336,55 @@ export function timeLabel(date: number) {
     : value.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
-export function statusLabel(status: string) {
-  const labels: Record<string, string> = {
-    idle: "Ready for questions",
-    processing: "Working on the queue",
-    paused: "Agent paused",
-    retrying: "Trying again",
-    "over-budget": "Model budget reached",
-    disconnected: "Agent offline",
-  };
-  return labels[status] || "Waiting for agent";
+export function plural(count: number, word: string) {
+  return `${count} ${word}${count === 1 ? "" : "s"}`;
+}
+
+/** Clears a non-error message after a few seconds. Errors stay until replaced. */
+export function useAutoClear(
+  message: { text: string; error: boolean } | null,
+  clear: (value: null) => void,
+) {
+  useEffect(() => {
+    if (!message || message.error) return;
+    const timer = setTimeout(() => clear(null), 5000);
+    return () => clearTimeout(timer);
+  }, [message, clear]);
+}
+
+export function isAgentHealthy(status: string) {
+  return status === "idle" || status === "processing";
 }
 
 export function QuestionStatus({ question }: { question: Question }) {
   if (question.speakerAnswered)
     return (
-      <span className="status-pill good">
-        <Icon name="check" size={10} />
-        Answered by speaker
+      <span className="tag good">
+        <Icon name="check" size={14} />
+        Answered
       </span>
     );
   if (question.selected)
     return (
-      <span className="status-pill warn">
-        <Icon name="screen" size={10} />
-        On the screen
+      <span className="tag accent">
+        <Icon name="screen" size={14} />
+        On screen
       </span>
     );
-  if (question.reply)
-    return (
-      <span className="status-pill neutral">Agent replied · open for Q&A</span>
-    );
-  return <span>Awaiting a reply</span>;
+  return null;
 }
 
 export function AgentReply({ question }: { question: Question }) {
   if (!question.reply) return null;
   return (
-    <div className="reply">
-      <div className="reply-label">
-        <Icon name="spark" size={12} />
-        Backstage
-        <span style={{ fontWeight: 400, color: "var(--muted)" }}>
-          · agent reply
-        </span>
-      </div>
-      <p>{question.reply.text.slice(0, 1200)}</p>
+    <div className="reply" data-reply-disposition={question.reply.disposition}>
+      <p className="reply-label">
+        <Icon name="spark" size={14} />
+        Agent reply
+      </p>
+      <p className="reply-text">{question.reply.text.slice(0, 1200)}</p>
       {question.reply.disposition === "leave-for-speaker" && (
-        <div className="reply-note">Leaving this one for the speaker.</div>
+        <p className="reply-note">Left open for the speaker.</p>
       )}
     </div>
   );

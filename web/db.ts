@@ -33,11 +33,30 @@ export const config = {
 const globalDb = globalThis as typeof globalThis & {
   backstageDb?: DatabaseSync;
 };
-const sessionColumns = `revision INTEGER NOT NULL DEFAULT 0, pause_epoch INTEGER NOT NULL DEFAULT 0,
-  intake_paused INTEGER NOT NULL DEFAULT 0, agent_paused INTEGER NOT NULL DEFAULT 0,
-  selected_id TEXT, closing_requested INTEGER NOT NULL DEFAULT 0, closing_consumed INTEGER NOT NULL DEFAULT 0,
-  budget_used INTEGER NOT NULL DEFAULT 0, budget_reserved INTEGER NOT NULL DEFAULT 0,
-  recommendation_failed INTEGER NOT NULL DEFAULT 0, last_recommendation_attempt INTEGER NOT NULL DEFAULT 0`;
+/**
+ * Per-run session state and its defaults. Reset returns every column here to
+ * its default; pause_epoch only ever grows so late agent work stays rejected.
+ */
+export const runState = {
+  revision: 0,
+  intake_paused: 0,
+  agent_paused: 0,
+  selected_id: null,
+  closing_requested: 0,
+  closing_consumed: 0,
+  budget_used: 0,
+  budget_reserved: 0,
+  recommendation_failed: 0,
+  last_recommendation_attempt: 0,
+} as const;
+const sessionColumns = [
+  "pause_epoch INTEGER NOT NULL DEFAULT 0",
+  ...Object.entries(runState).map(([name, value]) =>
+    value === null ? `${name} TEXT` : `${name} INTEGER NOT NULL DEFAULT ${value}`,
+  ),
+].join(", ");
+/** Tables whose rows belong to one session generation (votes and replies cascade from questions). */
+export const generationTables = ["questions", "work", "recommendations", "activity"];
 function columns(database: DatabaseSync, table: string) {
   return database
     .prepare(`PRAGMA table_info(${table})`)

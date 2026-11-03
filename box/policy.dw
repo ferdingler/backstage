@@ -46,10 +46,6 @@ when {
   ["cat", "printf", "echo", "pwd", "ls", "head", "tail", "wc", "grep"].contains(context.input.program)
 };
 
-@id("presentation_notes")
-permit (principal, action == Box::Action::"fs:read", resource)
-when { context.input.path == "@POLICY_NOTES@" };
-
 @id("scratch_read")
 permit (principal, action == Box::Action::"fs:read", resource)
 when {

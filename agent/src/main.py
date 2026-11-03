@@ -10,6 +10,7 @@ import logging
 import os
 import signal
 import sys
+import uuid
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -39,8 +40,14 @@ async def report_probe_activity(success: bool) -> None:
 
 
 class Worker:
-    def __init__(self, client: Client, *, deadline: float = 60, agent: BackstageAgent | None = None):
+    def __init__(
+        self, client: Client, *, deadline: float = 60, agent: BackstageAgent | None = None,
+        session: str | None = None,
+    ):
         self.client = client
+        # One agent serves one session. Without a pin it follows the live session.
+        self.session = session
+        self.session_title: str | None = None
         self.deadline = deadline
         self.stopping = asyncio.Event()
         self.work: dict[str, Any] | None = None
@@ -162,8 +169,14 @@ class Worker:
         backoff = 2.0
         while not self.stopping.is_set():
             try:
-                state = await self.client.state()
+                state = await self.client.state(self.session)
                 self.generation = state["generation"]
+                title = state.get("sessionTitle")
+                if title != self.session_title:
+                    self.session_title = title
+                    mode = "pinned" if self.session else "following the live session"
+                    live = "live" if state.get("live") else "not live"
+                    print(f"Backstage: session “{title}” ({mode}; {live})", flush=True)
                 if state["agentPaused"]:
                     await self.heartbeat("paused")
                     if once:
@@ -185,7 +198,16 @@ class Worker:
                         return 0
                     backoff = 2
                     await self.pause(3)
-            except (httpx.HTTPError, ServiceError):
+            except ServiceError as error:
+                if error.code == "SESSION_NOT_FOUND":
+                    print("Backstage: the pinned session does not exist. Copy its ID from the host page.", file=sys.stderr)
+                    return 2
+                self.status("disconnected")
+                if once:
+                    return 1
+                await self.pause(backoff)
+                backoff = min(30, backoff * 2)
+            except httpx.HTTPError:
                 self.status("disconnected")
                 if once:
                     return 1
@@ -201,6 +223,10 @@ async def main() -> int:
     parser = argparse.ArgumentParser(description="Backstage: one bounded local Strands worker. Run inside Box.")
     parser.add_argument("--check", action="store_true", help="check SDK/model construction without invoking the provider")
     parser.add_argument("--once", action="store_true", help="claim at most one batch, then exit")
+    parser.add_argument(
+        "--session", metavar="ID", default=os.environ.get("BACKSTAGE_SESSION") or None,
+        help="serve only this session (ID from the host page); default: follow the live session",
+    )
     parser.add_argument("--probe-command", metavar="COMMAND", help="operator-only synthetic boundary probe through the real Box shell")
     parser.add_argument("--probe-http", nargs=2, metavar=("METHOD", "URL"), help="operator-only request through the Box gateway; prints status and bounded body, never headers")
     args = parser.parse_args()
@@ -250,12 +276,18 @@ async def main() -> int:
         success = result["status"] == "success"
         await report_probe_activity(success)
         return 0 if success else 1
+    if args.session is not None:
+        try:
+            args.session = str(uuid.UUID(args.session))
+        except ValueError:
+            print("Backstage configuration: --session must be a session ID from the host page.", file=sys.stderr)
+            return 2
     client = Client(os.environ.get("BACKSTAGE_API_URL", "http://127.0.0.1:3003"))
     try:
         deadline = float(os.environ.get("BACKSTAGE_RUN_SECONDS", "60"))
         if not 0 < deadline <= 60:
             raise ValueError("BACKSTAGE_RUN_SECONDS must be greater than 0 and at most 60.")
-        worker = Worker(client, deadline=deadline)
+        worker = Worker(client, deadline=deadline, session=args.session)
         print(f"Backstage: Strands {importlib.metadata.version('strands-agents')}; provider {os.environ.get('MODEL_PROVIDER', 'bedrock')}; six calls/run, 512 tokens/call", flush=True)
         if args.check:
             print("Backstage: configuration and SDK construction passed; provider not invoked.")

@@ -598,6 +598,9 @@ export default function HostPage() {
     (q) => q.id === data?.event.selectedQuestionId && !q.hidden,
   );
   const agentStatus = data?.agent.status || "disconnected";
+  const agentSession = data?.sessions.find(
+    (item) => item.id === data.worker.sessionId,
+  );
   const live = !!data?.session.live;
   const recommendation = data?.recommendation;
   const queue = (recommendation?.queue || []).flatMap((item) => {
@@ -816,6 +819,9 @@ export default function HostPage() {
                   {data.worker.lastSeenAt
                     ? `Seen ${timeLabel(data.worker.lastSeenAt)}`
                     : "Never seen"}
+                  {agentStatus === "elsewhere" &&
+                    agentSession &&
+                    ` · on “${agentSession.title}”`}
                 </dd>
               </div>
               <div className="stat">
@@ -1105,6 +1111,21 @@ export default function HostPage() {
                       control({ action: "agent", value: !value })
                     }
                   />
+                  <div className="agent-command">
+                    <p className="switch-label" id="agent-command-label">
+                      Agent for this session
+                    </p>
+                    <code
+                      aria-labelledby="agent-command-label"
+                      data-session-id={data.session.id}
+                    >
+                      uv run --project agent python box/run.py --session{" "}
+                      {data.session.id}
+                    </code>
+                    <p className="hint">
+                      Without --session, the agent follows the live session.
+                    </p>
+                  </div>
                   <button
                     type="button"
                     className="button small subtle danger-text"

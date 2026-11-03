@@ -37,8 +37,11 @@ class Client:
     async def close(self) -> None:
         await self.http.aclose()
 
-    async def request(self, method: str, operation: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-        response = await self.http.request(method, f"/api/agent/{operation}", json=payload)
+    async def request(
+        self, method: str, operation: str, payload: dict[str, Any] | None = None,
+        params: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        response = await self.http.request(method, f"/api/agent/{operation}", json=payload, params=params)
         if response.status_code >= 400:
             try:
                 code = response.json().get("error", {}).get("code", "request_failed")
@@ -53,8 +56,9 @@ class Client:
             raise ServiceError(502, "invalid_shape")
         return result
 
-    async def state(self) -> dict[str, Any]:
-        return await self.request("GET", "state")
+    async def state(self, session: str | None = None) -> dict[str, Any]:
+        """Current state of `session`, or of the live session when none is given."""
+        return await self.request("GET", "state", params={"session": session} if session else None)
 
     async def post(self, operation: str, **payload: Any) -> dict[str, Any]:
         return await self.request("POST", operation, payload)

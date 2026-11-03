@@ -8,14 +8,14 @@ policy = "policy.local.dw"
 [agent]
 command = ["@VENV_PYTHON@", "@AGENT_SOURCE@/main.py"]
 workspace = "@SCRATCH@"
-env = { AWS_REGION = "us-west-2", AWS_EC2_METADATA_DISABLED = "true", MODEL_ID = "us.anthropic.claude-sonnet-4-5-20250929-v1:0", BACKSTAGE_API_URL = "http://127.0.0.1:3003", BACKSTAGE_NOTES = "@NOTES@", BACKSTAGE_SCRATCH = "@SCRATCH@", BACKSTAGE_SHELL = "zsh", PATH = "/usr/bin:/bin", TMPDIR = "@TMP@" }
+env = { AWS_REGION = "us-west-2", AWS_EC2_METADATA_DISABLED = "true", MODEL_ID = "us.anthropic.claude-sonnet-4-5-20250929-v1:0", BACKSTAGE_API_URL = "http://127.0.0.1:3003", BACKSTAGE_SCRATCH = "@SCRATCH@", BACKSTAGE_SHELL = "zsh", PATH = "/usr/bin:/bin", TMPDIR = "@TMP@" }
 
 [agent.filesystem]
 read = ["@VENV@", "@PYTHON_RUNTIME@", "@AGENT_SOURCE@", "@TMP@"]
 write = ["@TMP@"]
 # The interpreter's binary and shared libraries are resolved during setup.
 exec = ["@PYTHON_EXEC@", @NATIVE_EXEC@]
-# Notes and scratch are deliberately accessed through Strands Shell, not here.
+# Talking points arrive through the API. Scratch is accessed through Strands Shell, not here.
 
 [egress.bedrock]
 destinations = ["bedrock-runtime.us-west-2.amazonaws.com"]

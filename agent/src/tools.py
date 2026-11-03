@@ -1,4 +1,4 @@
-"""Real shell operations; Box's zsh alias mediates each command and file access."""
+"""Session notes plus real shell operations; Box's zsh alias mediates each command and file access."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from pathlib import Path
 from strands import tool
 
 Activity = Callable[[str], Awaitable[None]]
+Notes = Callable[[], str]
 MAX_OUTPUT = 16_384
 
 
@@ -50,17 +51,19 @@ async def shell(command: str, executable: str = "zsh") -> dict:
     }
 
 
-def make_tools(activity: Activity):
-    notes = os.environ.get("BACKSTAGE_NOTES", str(Path(__file__).resolve().parents[2] / "talk.md"))
+def make_tools(activity: Activity, notes: Notes):
     scratch = os.environ.get("BACKSTAGE_SCRATCH", str(Path(__file__).resolve().parents[1] / "scratch"))
     executable = os.environ.get("BACKSTAGE_SHELL", "zsh")
 
     @tool
     async def read_notes() -> dict:
-        """Read the presentation's prepared material. Use it before answering or recommending."""
-        result = await shell(f"cat {shlex.quote(notes)}", executable)
-        await activity("notes-read" if result["status"] == "success" else "tool-error")
-        return result
+        """Read the session's talking points, written by the host. Use them before answering or recommending."""
+        text = notes().strip()
+        await activity("notes-read")
+        return {
+            "status": "success",
+            "content": [{"text": text or "The host has not written talking points for this session."}],
+        }
 
     @tool
     async def write_scratch(note: str) -> dict:
@@ -80,7 +83,7 @@ def make_tools(activity: Activity):
     async def run_command(command: str) -> dict:
         """Run a short shell command through Box. Actual policy refusals are returned unchanged.
 
-        Use only for relevant presentation work and explicitly requested synthetic probes.
+        Use only for relevant session work and explicitly requested synthetic probes.
         Do not search for alternate paths around a denial.
 
         Args:

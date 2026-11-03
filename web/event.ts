@@ -298,9 +298,13 @@ function getWork(value: unknown, s: SessionRow): WorkRow {
   if (!work) fail(404, "WORK_NOT_FOUND", "Work item not found.");
   return work;
 }
-function workPayload(w: WorkRow) {
+function workPayload(w: WorkRow, s: SessionRow) {
   return {
     id: w.id,
+    sessionId: s.id,
+    sessionTitle: s.title,
+    // Host-written reference material for this session's answers.
+    talkingPoints: s.talking_points,
     generation: w.generation,
     pauseEpoch: w.pause_epoch,
     kind: w.kind,
@@ -838,7 +842,7 @@ export async function handle(
               `${kind === "answers" ? `${ids.length} question(s)` : "Q&A recommendation"} claimed.`,
               id,
             );
-            return { work: workPayload(getWork(id, e)) };
+            return { work: workPayload(getWork(id, e), e) };
           }
           if (operation === "agent-result") {
             fields(
@@ -1049,7 +1053,7 @@ export async function handle(
               ["workId", "questionId", "message"],
             );
             const summaries: Record<string, string> = {
-              "notes-read": "Agent read the presentation notes.",
+              "notes-read": "Agent read the session’s talking points.",
               "tool-success": "Agent tool completed successfully.",
               "tool-error": "Agent tool returned an error.",
               retry: "Agent is retrying an operation.",

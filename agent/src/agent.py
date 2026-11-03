@@ -62,8 +62,11 @@ class WorkCompletion:
             )[:40]
         else:
             raise ValueError("Unknown work kind.")
+        # Host-written notes reach the model through read_notes, not the envelope.
+        self.talking_points = str(work.get("talkingPoints") or "")
         self.envelope = {
             "generation": work["generation"], "kind": work["kind"],
+            "sessionTitle": str(work.get("sessionTitle") or ""),
             "questionIds": list(work["questionIds"]), "revision": work["revision"],
             "questions": [{k: q[k] for k in ("id", "text", "votes", "speakerAnswered")} for q in questions],
         }
@@ -217,12 +220,16 @@ class BackstageAgent:
         self._sdk = Agent(
             model=configured_model() if model is None else model,
             system_prompt=Path(__file__).with_name("prompt.md").read_text(),
-            tools=[*make_tools(activity), finish_answers, finish_recommendation],
+            tools=[*make_tools(activity, self._talking_points), finish_answers, finish_recommendation],
             hooks=[_RunHooks(self._state)],
             callback_handler=None,
             retry_strategy=None,
             trace_attributes={"service.name": "backstage-agent"},
         )
+
+    def _talking_points(self) -> str:
+        completion = self._state.completion
+        return completion.talking_points if completion is not None else ""
 
     async def run(
         self, work: dict[str, Any], *, deadline: float, cancelled: asyncio.Event,

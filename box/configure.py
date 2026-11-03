@@ -52,10 +52,8 @@ def main() -> None:
         "PYTHON_RUNTIME": runtime,
         "PYTHON_EXEC": python.resolve(),
         "AGENT_SOURCE": root / "agent/src",
-        "NOTES": root / "talk.md",
         "SCRATCH": scratch,
         "TMP": tmp,
-        "POLICY_NOTES": policy_path(root / "talk.md"),
         "POLICY_SCRATCH": policy_path(scratch),
     }
     for template, output in (("box.toml", "box.local.toml"), ("policy.dw", "policy.local.dw")):

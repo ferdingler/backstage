@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
+import { fail, identifier } from "./validate";
 
 export function setting(
   name: string,
@@ -141,11 +142,6 @@ export type SessionRow = {
   recommendation_failed: number;
   last_recommendation_attempt: number;
 };
-export type WorkerRow = {
-  status: string;
-  heartbeat: number | null;
-  session_id: string | null;
-};
 export type WorkRow = {
   id: string;
   generation: string;
@@ -184,14 +180,9 @@ export function defaultSession(): SessionRow {
       .prepare("SELECT * FROM sessions ORDER BY created_at DESC, rowid DESC LIMIT 1")
       .get()) as SessionRow;
 }
-export function worker(): WorkerRow {
-  return db.prepare("SELECT * FROM worker WHERE singleton=1").get() as WorkerRow;
-}
-/** Agent work is allowed only while the session is live and not agent-paused. */
-export function agentBlocked(s: SessionRow) {
-  return !!s.agent_paused || !s.live;
-}
+/** Runs `fn` atomically. Nested calls join the enclosing transaction. */
 export function transaction<T>(fn: () => T): T {
+  if (database().isTransaction) return fn();
   db.exec("BEGIN IMMEDIATE");
   try {
     const value = fn();
@@ -250,32 +241,14 @@ export function board(s: SessionRow, visitor = "") {
         : null,
     }));
 }
-export function expireWork() {
-  const stale = db
-    .prepare("SELECT * FROM work WHERE status='active' AND expires<=?")
-    .all(Date.now()) as WorkRow[];
-  for (const w of stale) {
-    db.prepare(
-      "UPDATE work SET status='expired',calls_used=reservation WHERE id=?",
-    ).run(w.id);
-    db.prepare(
-      "UPDATE sessions SET budget_used=budget_used+?,budget_reserved=MAX(0,budget_reserved-?) WHERE generation=?",
-    ).run(w.reservation, w.reservation, w.generation);
-    const ids: string[] = JSON.parse(w.question_ids);
-    for (const id of ids)
-      db.prepare("UPDATE questions SET next_try=? WHERE id=?").run(
-        Date.now() + 3000,
-        id,
-      );
-    if (w.kind === "recommendation")
-      db.prepare(
-        "UPDATE sessions SET recommendation_failed=1 WHERE generation=?",
-      ).run(w.generation);
-    activity(
-      w.generation,
-      "retry",
-      "Work lease expired; its full model reservation remains charged.",
-      w.id,
-    );
-  }
+/** Resolves a question id within session `s`. */
+export function question(s: SessionRow, value: unknown): string {
+  const id = identifier(value);
+  if (
+    !db
+      .prepare("SELECT 1 FROM questions WHERE id=? AND generation=?")
+      .get(id, s.generation)
+  )
+    fail(404, "QUESTION_NOT_FOUND", "Question not found.");
+  return id;
 }

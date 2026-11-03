@@ -5,71 +5,26 @@ import {
   config,
   board,
   activity,
-  expireWork,
+  question,
   transaction,
   sessionById,
   sessionByGeneration,
   liveSession,
   defaultSession,
-  worker,
-  agentBlocked,
   type SessionRow,
-  type WorkRow,
 } from "./db";
+import * as work from "./work";
+import {
+  ApiError,
+  fail,
+  object,
+  fields,
+  identifier,
+  text,
+  boolean,
+  type Json,
+} from "./validate";
 
-class ApiError extends Error {
-  constructor(
-    public status: number,
-    public code: string,
-    message: string,
-    public retryAfter?: number,
-  ) {
-    super(message);
-  }
-}
-type Json = Record<string, unknown>;
-const idPattern =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-function fail(status: number, code: string, message: string): never {
-  throw new ApiError(status, code, message);
-}
-function object(value: unknown): Json {
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    fail(400, "INVALID_BODY", "Expected a JSON object.");
-  return value as Json;
-}
-function fields(value: Json, required: string[], optional: string[] = []) {
-  if (
-    required.some((k) => !(k in value)) ||
-    Object.keys(value).some((k) => ![...required, ...optional].includes(k))
-  )
-    fail(400, "INVALID_FIELDS", "Missing or unsupported request fields.");
-}
-function identifier(value: unknown): string {
-  if (typeof value !== "string" || !idPattern.test(value))
-    fail(400, "INVALID_ID", "Invalid identifier.");
-  return value;
-}
-function text(value: unknown, max: number): string {
-  if (typeof value !== "string" || !value.trim() || value.length > max)
-    fail(400, "INVALID_TEXT", `Enter between 1 and ${max} characters.`);
-  return value;
-}
-function boolean(value: unknown): boolean {
-  if (typeof value !== "boolean")
-    fail(400, "INVALID_VALUE", "Expected true or false.");
-  return value;
-}
-function integer(value: unknown, max: number): number {
-  if (
-    typeof value !== "number" ||
-    !Number.isInteger(value) ||
-    value < 0 ||
-    value > max
-  )
-    fail(400, "INVALID_VALUE", "Invalid integer.");
-  return value;
-}
 /** Resolves the session a request's generation belongs to. */
 function generation(value: unknown): SessionRow {
   const id = identifier(value);
@@ -232,21 +187,11 @@ function publicWrite(req: NextRequest, kind: "question" | "vote") {
   );
   return who.id;
 }
-const workerStaleMs = 15000;
-function workerState() {
-  const w = worker();
-  const stale = !w.heartbeat || Date.now() - w.heartbeat > workerStaleMs;
-  return { ...w, stale };
-}
 function sessionInfo(s: SessionRow) {
   return { id: s.id, title: s.title, live: !!s.live, createdAt: s.created_at };
 }
 function snapshot(s: SessionRow, visitorId = "") {
   const questions = board(s, visitorId);
-  const raw = db
-    .prepare("SELECT * FROM recommendations WHERE generation=?")
-    .get(s.generation);
-  const w = workerState();
   return {
     session: sessionInfo(s),
     event: {
@@ -260,96 +205,9 @@ function snapshot(s: SessionRow, visitorId = "") {
       questionCap: config.questionCap,
     },
     questions,
-    agent: {
-      status: w.stale
-        ? "disconnected"
-        : w.session_id !== s.id
-          ? "elsewhere"
-          : agentBlocked(s)
-            ? "paused"
-            : w.status,
-      lastSeenAt: w.heartbeat,
-    },
-    recommendation: raw
-      ? {
-          ...JSON.parse(raw.data as string),
-          revision: raw.revision,
-          createdAt: raw.created_at,
-          stale: raw.revision !== s.revision || !!s.recommendation_failed,
-        }
-      : null,
+    agent: { status: work.agentStatus(s), lastSeenAt: work.worker().heartbeat },
+    recommendation: work.recommendation(s),
   };
-}
-function budget(s: SessionRow) {
-  return {
-    used: s.budget_used,
-    reserved: s.budget_reserved,
-    limit: config.modelBudget,
-    closingReserve: s.closing_consumed
-      ? 0
-      : Math.min(config.closingReserve, config.modelBudget),
-  };
-}
-function getWork(value: unknown, s: SessionRow): WorkRow {
-  const id = identifier(value);
-  const work = db
-    .prepare("SELECT * FROM work WHERE id=? AND generation=?")
-    .get(id, s.generation) as WorkRow | undefined;
-  if (!work) fail(404, "WORK_NOT_FOUND", "Work item not found.");
-  return work;
-}
-function workPayload(w: WorkRow, s: SessionRow) {
-  return {
-    id: w.id,
-    sessionId: s.id,
-    sessionTitle: s.title,
-    // Host-written reference material for this session's answers.
-    talkingPoints: s.talking_points,
-    generation: w.generation,
-    pauseEpoch: w.pause_epoch,
-    kind: w.kind,
-    questionIds: JSON.parse(w.question_ids),
-    questions: JSON.parse(w.snapshot),
-    revision: w.revision,
-    leaseExpiresAt: w.expires,
-    maxCalls: w.reservation,
-    closing: !!w.closing,
-  };
-}
-function reconcile(
-  w: WorkRow,
-  calls: number,
-  status: string,
-  resultId: string | null = null,
-) {
-  db.prepare(
-    "UPDATE work SET status=?,calls_used=?,result_id=? WHERE id=?",
-  ).run(status, calls, resultId, w.id);
-  db.prepare(
-    "UPDATE sessions SET budget_reserved=MAX(0,budget_reserved-?),budget_used=budget_used+? WHERE generation=?",
-  ).run(w.reservation, calls, w.generation);
-}
-function active(w: WorkRow, s: SessionRow) {
-  if (w.status !== "active")
-    fail(409, "WORK_FINISHED", "This work item has finished.");
-  if (w.expires <= Date.now())
-    fail(409, "LEASE_EXPIRED", "This work lease expired.");
-  if (agentBlocked(s) || w.pause_epoch !== s.pause_epoch)
-    fail(
-      409,
-      "WORK_CANCELLED",
-      "Agent processing was paused. Discard this result.",
-    );
-}
-function question(value: unknown, s: SessionRow) {
-  const id = identifier(value);
-  if (
-    !db
-      .prepare("SELECT 1 FROM questions WHERE id=? AND generation=?")
-      .get(id, s.generation)
-  )
-    fail(404, "QUESTION_NOT_FOUND", "Question not found.");
-  return id;
 }
 function requireLive(): SessionRow {
   const s = liveSession();
@@ -497,7 +355,7 @@ export async function handle(
       const voted = boolean(data.voted);
       response = transaction(() => {
         const s = requireLive();
-        const id = question(data.questionId, s);
+        const id = question(s, data.questionId);
         const change = voted
           ? db
               .prepare(
@@ -524,13 +382,13 @@ export async function handle(
           fail(404, "SESSION_NOT_FOUND", "That session no longer exists."))
         : defaultSession();
       const state = snapshot(s);
-      const w = workerState();
+      const w = work.worker();
       response = {
         ...state,
         session: { ...sessionInfo(s), talkingPoints: s.talking_points },
         sessions: sessionList(),
         revision: s.revision,
-        budget: budget(s),
+        budget: work.budget(s),
         worker: {
           status: w.status,
           lastSeenAt: w.heartbeat,
@@ -630,7 +488,7 @@ export async function handle(
         } else if (action === "select") {
           fields(data, ["generation", "action", "questionId"]);
           const id =
-            data.questionId === null ? null : question(data.questionId, s);
+            data.questionId === null ? null : question(s, data.questionId);
           if (
             id &&
             db.prepare("SELECT hidden FROM questions WHERE id=?").get(id)
@@ -656,7 +514,7 @@ export async function handle(
           );
         } else if (action === "answered" || action === "hide") {
           fields(data, ["generation", "action", "questionId", "value"]);
-          const id = question(data.questionId, s);
+          const id = question(s, data.questionId);
           const value = boolean(data.value);
           const column = action === "answered" ? "speaker_answered" : "hidden";
           const change = db
@@ -694,7 +552,7 @@ export async function handle(
     } else {
       channel(req, "agent");
       if (operation === "agent-state") {
-        transaction(expireWork);
+        work.expire();
         // An agent may be pointed at a session; otherwise it follows the live one.
         const requested = req.nextUrl.searchParams.get("session");
         const s = requested
@@ -707,142 +565,26 @@ export async function handle(
           live: !!s.live,
           generation: s.generation,
           pauseEpoch: s.pause_epoch,
-          agentPaused: agentBlocked(s),
-          status: worker().status,
+          agentPaused: work.blocked(s),
+          status: work.worker().status,
           revision: s.revision,
           closingRequested: !!s.closing_requested,
-          budget: budget(s),
+          budget: work.budget(s),
           questions: board(s),
           serverTime: Date.now(),
         };
       } else {
         const data = await body(req);
         response = transaction(() => {
-          expireWork();
+          work.expire();
           const s = generation(data.generation);
           if (operation === "agent-heartbeat") {
             fields(data, ["generation", "status"]);
-            const statuses = [
-              "idle",
-              "processing",
-              "paused",
-              "retrying",
-              "over-budget",
-              "disconnected",
-            ];
-            if (!statuses.includes(data.status as string))
-              fail(400, "INVALID_STATUS", "Unknown worker status.");
-            db.prepare(
-              "UPDATE worker SET status=?,heartbeat=?,session_id=? WHERE singleton=1",
-            ).run(data.status as string, Date.now(), s.id);
-            return {
-              ok: true,
-              generation: s.generation,
-              agentPaused: agentBlocked(s),
-              pauseEpoch: s.pause_epoch,
-            };
+            return work.heartbeat(s, data.status);
           }
           if (operation === "agent-claim") {
             fields(data, ["generation"]);
-            const e = s;
-            if (agentBlocked(e)) return { work: null, reason: "paused" };
-            // One agent instance: at most one active work item across sessions.
-            const existing = db
-              .prepare(
-                "SELECT * FROM work WHERE status='active' ORDER BY rowid LIMIT 1",
-              )
-              .get() as WorkRow | undefined;
-            if (existing) return { work: null, reason: "busy" };
-            const questions = board(e);
-            const eligible = questions.filter((q) => !q.speakerAnswered);
-            const pending = db
-              .prepare(
-                `SELECT q.id FROM questions q LEFT JOIN replies r ON r.question_id=q.id WHERE q.generation=? AND r.question_id IS NULL AND q.attempts<3 AND q.next_try<=? AND q.speaker_answered=0 ORDER BY q.created_at LIMIT 5`,
-              )
-              .all(e.generation, Date.now())
-              .map((q) => q.id as string);
-            const rec = db
-              .prepare("SELECT revision FROM recommendations WHERE generation=?")
-              .get(e.generation);
-            const recommendationAttempts = db
-              .prepare(
-                "SELECT COUNT(*) AS n FROM work WHERE kind='recommendation' AND revision=? AND generation=? AND closing=0",
-              )
-              .get(e.revision, e.generation)!.n as number;
-            const dirty =
-              eligible.length > 0 &&
-              recommendationAttempts < 3 &&
-              (!rec ||
-                rec.revision !== e.revision ||
-                !!e.recommendation_failed);
-            const closing = !!e.closing_requested;
-            const kind = closing
-              ? "recommendation"
-              : pending.length
-                ? "answers"
-                : dirty && Date.now() - e.last_recommendation_attempt >= 60000
-                  ? "recommendation"
-                  : null;
-            if (!kind) return { work: null, reason: "idle" };
-            if (closing && !eligible.length) {
-              db.prepare(
-                "UPDATE sessions SET closing_requested=0 WHERE id=?",
-              ).run(e.id);
-              return { work: null, reason: "idle" };
-            }
-            const reserve = e.closing_consumed
-              ? 0
-              : Math.min(config.closingReserve, config.modelBudget);
-            const ceiling = config.modelBudget - (closing ? 0 : reserve);
-            if (e.budget_used + e.budget_reserved + config.runCalls > ceiling) {
-              const previous = worker().status;
-              db.exec(
-                "UPDATE worker SET status='over-budget' WHERE singleton=1",
-              );
-              if (previous !== "over-budget")
-                activity(
-                  e.generation,
-                  "budget-exhaustion",
-                  "Model budget is exhausted; audience and host controls remain available.",
-                );
-              return { work: null, reason: "over-budget" };
-            }
-            const id = randomUUID();
-            const ids = kind === "answers" ? pending : [];
-            const now = Date.now();
-            db.prepare(
-              "INSERT INTO work(id,generation,pause_epoch,kind,question_ids,snapshot,revision,expires,closing,reservation) VALUES(?,?,?,?,?,?,?,?,?,?)",
-            ).run(
-              id,
-              e.generation,
-              e.pause_epoch,
-              kind,
-              JSON.stringify(ids),
-              JSON.stringify(questions),
-              e.revision,
-              now + config.leaseMs,
-              Number(closing),
-              config.runCalls,
-            );
-            db.prepare(
-              "UPDATE sessions SET budget_reserved=budget_reserved+?,closing_requested=CASE WHEN ? THEN 0 ELSE closing_requested END,closing_consumed=CASE WHEN ? THEN 1 ELSE closing_consumed END WHERE id=?",
-            ).run(config.runCalls, Number(closing), Number(closing), e.id);
-            db.exec("UPDATE worker SET status='processing' WHERE singleton=1");
-            if (kind === "recommendation")
-              db.prepare(
-                "UPDATE sessions SET last_recommendation_attempt=? WHERE id=?",
-              ).run(now, e.id);
-            for (const q of ids)
-              db.prepare(
-                "UPDATE questions SET attempts=attempts+1 WHERE id=?",
-              ).run(q);
-            activity(
-              e.generation,
-              "work-claimed",
-              `${kind === "answers" ? `${ids.length} question(s)` : "Q&A recommendation"} claimed.`,
-              id,
-            );
-            return { work: workPayload(getWork(id, e), e) };
+            return work.claim(s);
           }
           if (operation === "agent-result") {
             fields(
@@ -850,201 +592,15 @@ export async function handle(
               ["generation", "workId", "resultId", "callsUsed"],
               ["replies", "recommendation"],
             );
-            const w = getWork(data.workId, s);
-            const resultId = identifier(data.resultId);
-            const calls = integer(data.callsUsed, w.reservation);
-            if (w.status === "done" && w.result_id === resultId)
-              return { ok: true, duplicate: true };
-            active(w, s);
-            if (resultId !== w.id)
-              fail(
-                400,
-                "INVALID_RESULT_ID",
-                "Use the work identifier as the stable result identifier.",
-              );
-            if (w.kind === "answers") {
-              if (
-                data.recommendation !== undefined ||
-                !Array.isArray(data.replies)
-              )
-                fail(400, "INVALID_RESULT", "Expected question replies only.");
-              const ids: string[] = JSON.parse(w.question_ids);
-              const seen = new Set<string>();
-              const replies = data.replies.map((raw) => {
-                const reply = object(raw);
-                fields(reply, ["questionId", "text", "disposition"]);
-                const id = identifier(reply.questionId);
-                if (!ids.includes(id) || seen.has(id))
-                  fail(
-                    400,
-                    "INVALID_RESULT",
-                    "Reply identifiers must match claimed questions exactly.",
-                  );
-                seen.add(id);
-                if (
-                  !["answered", "leave-for-speaker"].includes(
-                    reply.disposition as string,
-                  )
-                )
-                  fail(400, "INVALID_RESULT", "Invalid reply disposition.");
-                return {
-                  id,
-                  text: text(reply.text, 1200),
-                  disposition: reply.disposition as string,
-                };
-              });
-              if (seen.size !== ids.length)
-                fail(
-                  400,
-                  "INVALID_RESULT",
-                  "Return one reply for every claimed question.",
-                );
-              for (const r of replies) {
-                db.prepare(
-                  "INSERT INTO replies(question_id,text,disposition,result_id) VALUES(?,?,?,?)",
-                ).run(r.id, r.text, r.disposition, resultId);
-                activity(
-                  s.generation,
-                  "reply-published",
-                  "Backstage reply published.",
-                  w.id,
-                  r.id,
-                );
-              }
-            } else {
-              if (data.replies !== undefined)
-                fail(400, "INVALID_RESULT", "Expected a recommendation only.");
-              const rec = object(data.recommendation);
-              fields(rec, ["revision", "groups", "queue"]);
-              if (
-                rec.revision !== w.revision ||
-                rec.revision !== s.revision
-              )
-                fail(
-                  409,
-                  "STALE_RECOMMENDATION",
-                  "Questions, votes, or speaker status changed. Discard this recommendation.",
-                );
-              if (
-                !Array.isArray(rec.groups) ||
-                rec.groups.length > 8 ||
-                !Array.isArray(rec.queue) ||
-                rec.queue.length > 8
-              )
-                fail(
-                  400,
-                  "INVALID_RESULT",
-                  "Recommend at most eight groups and queue entries.",
-                );
-              const eligible = new Set(
-                board(s)
-                  .filter((q) => !q.speakerAnswered)
-                  .map((q) => q.id),
-              );
-              const queued = new Set<string>();
-              const grouped = new Set<string>();
-              const groups = rec.groups.map((raw) => {
-                const group = object(raw);
-                fields(group, ["title", "questionIds"]);
-                if (
-                  !Array.isArray(group.questionIds) ||
-                  group.questionIds.length < 2 ||
-                  group.questionIds.length > 20
-                )
-                  fail(
-                    400,
-                    "INVALID_RESULT",
-                    "Each group needs 2–20 questions.",
-                  );
-                return {
-                  title: text(group.title, 100),
-                  questionIds: group.questionIds.map((value) => {
-                    const id = identifier(value);
-                    if (!eligible.has(id) || grouped.has(id))
-                      fail(
-                        400,
-                        "INVALID_RESULT",
-                        "Invalid or duplicate group member.",
-                      );
-                    grouped.add(id);
-                    return id;
-                  }),
-                };
-              });
-              const queue = rec.queue.map((raw) => {
-                const item = object(raw);
-                fields(item, ["questionId", "reason"]);
-                const id = identifier(item.questionId);
-                if (!eligible.has(id) || queued.has(id))
-                  fail(
-                    400,
-                    "INVALID_RESULT",
-                    "Invalid or duplicate queue member.",
-                  );
-                queued.add(id);
-                return { questionId: id, reason: text(item.reason, 240) };
-              });
-              db.prepare(
-                "INSERT OR REPLACE INTO recommendations(generation,revision,created_at,data) VALUES(?,?,?,?)",
-              ).run(
-                w.generation,
-                w.revision,
-                Date.now(),
-                JSON.stringify({ groups, queue }),
-              );
-              db.prepare(
-                "UPDATE sessions SET recommendation_failed=0 WHERE id=?",
-              ).run(s.id);
-              activity(
-                s.generation,
-                "queue-updated",
-                "Backstage recommendation updated; votes and host choices remain unchanged.",
-                w.id,
-              );
-            }
-            reconcile(w, calls, "done", resultId);
-            return { ok: true, duplicate: false };
+            return work.complete(s, data);
           }
           if (operation === "agent-ack") {
             fields(data, ["generation", "workId"]);
-            const w = getWork(data.workId, s);
-            if (w.status !== "done")
-              fail(
-                409,
-                "RESULT_REQUIRED",
-                "Publish the result before acknowledging work.",
-              );
-            db.prepare("UPDATE work SET acknowledged=1 WHERE id=?").run(w.id);
-            return { ok: true };
+            return work.acknowledge(s, data.workId);
           }
           if (operation === "agent-fail") {
             fields(data, ["generation", "workId", "callsUsed", "reason"]);
-            const w = getWork(data.workId, s);
-            const calls = integer(data.callsUsed, w.reservation);
-            if (
-              !["timeout", "error", "cancelled"].includes(data.reason as string)
-            )
-              fail(400, "INVALID_REASON", "Unknown failure reason.");
-            if (w.status !== "active") return { ok: true };
-            reconcile(w, calls, "failed");
-            if (w.kind === "recommendation")
-              db.prepare(
-                "UPDATE sessions SET recommendation_failed=1 WHERE id=?",
-              ).run(s.id);
-            for (const id of JSON.parse(w.question_ids))
-              db.prepare("UPDATE questions SET next_try=? WHERE id=?").run(
-                Date.now() + 3000,
-                id,
-              );
-            activity(
-              s.generation,
-              data.reason === "timeout" ? "timeout" : "retry",
-              data.reason === "cancelled"
-                ? "Late work discarded after pause or reset."
-                : "Agent work failed; bounded retry is available.",
-              w.id,
-            );
-            return { ok: true };
+            return work.abandon(s, data);
           }
           if (operation === "agent-activity") {
             fields(
@@ -1052,25 +608,7 @@ export async function handle(
               ["generation", "kind"],
               ["workId", "questionId", "message"],
             );
-            const summaries: Record<string, string> = {
-              "notes-read": "Agent read the session’s talking points.",
-              "tool-success": "Agent tool completed successfully.",
-              "tool-error": "Agent tool returned an error.",
-              retry: "Agent is retrying an operation.",
-              timeout: "Agent run reached its deadline.",
-            };
-            if (typeof data.kind !== "string" || !summaries[data.kind])
-              fail(400, "INVALID_KIND", "Unknown activity kind.");
-            const workId =
-              data.workId === undefined ? undefined : getWork(data.workId, s).id;
-            const questionId =
-              data.questionId === undefined
-                ? undefined
-                : question(data.questionId, s);
-            if (data.message !== undefined) text(data.message, 240);
-            // Fixed summaries deliberately exclude arbitrary tool output, prompts, or credentials.
-            activity(s.generation, data.kind, summaries[data.kind], workId, questionId);
-            return { ok: true };
+            return work.report(s, data);
           }
           fail(404, "NOT_FOUND", "Unknown operation.");
         });

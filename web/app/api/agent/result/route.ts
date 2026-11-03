@@ -1,7 +1,18 @@
-import { NextRequest } from "next/server";
-import { handle } from "@/event";
+import { route } from "@/api";
+import { transaction } from "@/db";
+import * as session from "@/session";
+import * as work from "@/work";
+import { fields } from "@/validate";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export function POST(request: NextRequest) {
-  return handle(request, "agent-result");
-}
+export const POST = route({}, ({ body }) =>
+  transaction(() => {
+    const s = session.forAgent(body.generation);
+    fields(
+      body,
+      ["generation", "workId", "resultId", "callsUsed"],
+      ["replies", "recommendation"],
+    );
+    return work.complete(s, body);
+  }),
+);

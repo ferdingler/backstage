@@ -1,7 +1,9 @@
-import { NextRequest } from "next/server";
-import { handle } from "@/event";
+import { route } from "@/api";
+import * as session from "@/session";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export function GET(request: NextRequest) {
-  return handle(request, "host-state");
-}
+export const GET = route({}, ({ req }) =>
+  session.hostView(
+    session.byIdOrDefault(req.nextUrl.searchParams.get("session")),
+  ),
+);

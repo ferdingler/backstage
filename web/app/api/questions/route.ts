@@ -1,7 +1,12 @@
-import { NextRequest } from "next/server";
-import { handle } from "@/event";
+import { route } from "@/api";
+import * as session from "@/session";
+import { fields } from "@/validate";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export function POST(request: NextRequest) {
-  return handle(request, "questions");
-}
+export const POST = route(
+  { origin: "public", visitor: "require", rate: "question" },
+  ({ body }) => {
+    fields(body, ["text"]);
+    return session.ask(body.text);
+  },
+);

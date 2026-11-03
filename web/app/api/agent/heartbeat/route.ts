@@ -1,7 +1,14 @@
-import { NextRequest } from "next/server";
-import { handle } from "@/event";
+import { route } from "@/api";
+import { transaction } from "@/db";
+import * as session from "@/session";
+import * as work from "@/work";
+import { fields } from "@/validate";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export function POST(request: NextRequest) {
-  return handle(request, "agent-heartbeat");
-}
+export const POST = route({}, ({ body }) =>
+  transaction(() => {
+    const s = session.forAgent(body.generation);
+    fields(body, ["generation", "status"]);
+    return work.heartbeat(s, body.status);
+  }),
+);

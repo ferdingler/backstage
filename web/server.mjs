@@ -1,28 +1,13 @@
 import http from "node:http";
 import next from "next";
 import { isIP } from "node:net";
+import routes from "./routes.json" with { type: "json" };
 
 const dev = process.argv.includes("--dev");
 const app = next({ dev, hostname: "127.0.0.1" });
 await app.prepare();
 const handler = app.getRequestHandler();
 const trustedProxy = process.env.TRUSTED_PROXY_IP;
-const publicPaths = new Map([
-  ["/", ["GET", "HEAD"]],
-  ["/broadcast", ["GET", "HEAD"]],
-  ["/favicon.ico", ["GET", "HEAD"]],
-  ["/api/health", ["GET"]],
-  ["/api/state", ["GET"]],
-  ["/api/broadcast", ["GET"]],
-  ["/api/questions", ["POST"]],
-  ["/api/votes", ["PUT"]],
-]);
-const agentPaths = new Map([
-  ["/api/agent/state", ["GET"]],
-  ...["claim", "heartbeat", "result", "ack", "fail", "activity"].map(
-    (action) => [`/api/agent/${action}`, ["POST"]],
-  ),
-]);
 const servers = [];
 function reject(res, status, message) {
   res.writeHead(status, {
@@ -57,29 +42,22 @@ for (const [channel, defaultPort, variable] of [
     )
       return reject(res, 404, "Unknown route.");
     const method = req.method || "GET";
+    const read = ["GET", "HEAD"].includes(method);
+    // Agent traffic is API-only; browsers on the other listeners need assets.
     const asset =
-      path.startsWith("/_next/static/") && ["GET", "HEAD"].includes(method);
-    const developmentAsset =
-      dev &&
       channel !== "agent" &&
-      path.startsWith("/_next/") &&
-      ["GET", "HEAD"].includes(method);
+      read &&
+      (path.startsWith("/_next/static/") ||
+        (dev && path.startsWith("/_next/")));
+    const page = Object.hasOwn(routes.pages, path) ? routes.pages[path] : null;
+    const api = Object.hasOwn(routes.api, path) ? routes.api[path] : null;
     const allowed =
-      channel === "public"
-        ? publicPaths.get(path)?.includes(method) || asset || developmentAsset
-        : channel === "agent"
-          ? agentPaths.get(path)?.includes(method)
-          : publicPaths.get(path)?.includes(method) ||
-            asset ||
-            developmentAsset ||
-            (["/host"].includes(path) && ["GET", "HEAD"].includes(method)) ||
-            (path === "/api/host/state" && method === "GET") ||
-            (path === "/api/host/control" && method === "POST");
+      asset ||
+      (read && !!page?.includes(channel)) ||
+      (api?.method === method && api.channels.includes(channel));
     if (!allowed)
       return reject(res, 404, "This route is unavailable on this listener.");
-    // Host control carries session talking points; everything else stays small.
-    const maxBody =
-      channel === "host" && path === "/api/host/control" ? 256 * 1024 : 8192;
+    const maxBody = api?.maxBody ?? routes.defaultMaxBody;
     if (Number(req.headers["content-length"] || 0) > maxBody)
       return reject(
         res,

@@ -17,8 +17,12 @@ backstage/
 │   │   ├── page.tsx           # Audience page
 │   │   ├── host/              # Host dashboard
 │   │   └── api/               # Route Handlers
-│   ├── db.ts
-│   └── event.ts
+│   ├── routes.json            # Which listener serves each path
+│   ├── api.ts                 # Route handler wrapper: access, limits, errors
+│   ├── session.ts             # Session operations and read models
+│   ├── work.ts                # Agent work leases and model budget
+│   ├── validate.ts
+│   └── db.ts
 ├── agent/                     # Python project root
 │   ├── pyproject.toml
 │   ├── uv.lock

@@ -92,7 +92,7 @@ The activity panel shows application events, not Box enforcement evidence. Use `
 
 ## Configuration and boundaries
 
-Limit defaults live in `web/db.ts`, port defaults in `web/server.mjs`, and origin defaults in `web/event.ts`. `web/.env.example` lists startup variables. Export web overrides before starting the server. This is one process and one SQLite database, not a serverless or multi-instance app.
+Limit defaults live in `web/db.ts`, port defaults in `web/server.mjs`, origin defaults in `web/api.ts`, and which listener serves each route in `web/routes.json`. `web/.env.example` lists startup variables. Export web overrides before starting the server. This is one process and one SQLite database, not a serverless or multi-instance app.
 
 | Setting | Default |
 | --- | --- |

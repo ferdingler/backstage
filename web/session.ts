@@ -70,6 +70,11 @@ export function byGeneration(value: unknown): SessionRow {
     );
   return s;
 }
+/** Resolves the agent's session after expiring overdue leases. */
+export function forAgent(generation: unknown): SessionRow {
+  work.expire();
+  return byGeneration(generation);
+}
 /** The requested session, else the live one, else the newest. */
 export function byIdOrDefault(requested: string | null): SessionRow {
   if (!requested) return defaultSession();

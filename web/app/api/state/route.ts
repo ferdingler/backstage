@@ -1,7 +1,17 @@
-import { NextRequest } from "next/server";
-import { handle } from "@/event";
+import { route } from "@/api";
+import * as session from "@/session";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export function GET(request: NextRequest) {
-  return handle(request, "state");
-}
+export const GET = route({ visitor: "mint", rate: "read" }, ({ visitor }) => {
+  const live = session.live();
+  // The audience never sees the agent's recommendation.
+  return live
+    ? { ...session.snapshot(live, visitor), recommendation: null }
+    : {
+        session: null,
+        event: null,
+        questions: [],
+        agent: null,
+        recommendation: null,
+      };
+});

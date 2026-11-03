@@ -1,0 +1,26 @@
+{
+  "$comment": "Which listener serves each path. server.mjs rejects anything not listed here; api.ts re-checks API channels and applies body limits. Pages allow GET and HEAD.",
+  "pages": {
+    "/": ["public", "host"],
+    "/broadcast": ["public", "host"],
+    "/favicon.ico": ["public", "host"],
+    "/host": ["host"]
+  },
+  "api": {
+    "/api/health": { "method": "GET", "channels": ["public", "host"] },
+    "/api/state": { "method": "GET", "channels": ["public", "host"] },
+    "/api/broadcast": { "method": "GET", "channels": ["public", "host"] },
+    "/api/questions": { "method": "POST", "channels": ["public", "host"] },
+    "/api/votes": { "method": "PUT", "channels": ["public", "host"] },
+    "/api/host/state": { "method": "GET", "channels": ["host"] },
+    "/api/host/control": { "method": "POST", "channels": ["host"], "maxBody": 262144, "$comment": "Carries session talking points." },
+    "/api/agent/state": { "method": "GET", "channels": ["agent"] },
+    "/api/agent/claim": { "method": "POST", "channels": ["agent"] },
+    "/api/agent/heartbeat": { "method": "POST", "channels": ["agent"] },
+    "/api/agent/result": { "method": "POST", "channels": ["agent"] },
+    "/api/agent/ack": { "method": "POST", "channels": ["agent"] },
+    "/api/agent/fail": { "method": "POST", "channels": ["agent"] },
+    "/api/agent/activity": { "method": "POST", "channels": ["agent"] }
+  },
+  "defaultMaxBody": 8192
+}

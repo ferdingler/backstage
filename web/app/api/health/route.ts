@@ -1,7 +1,8 @@
-import { NextRequest } from "next/server";
-import { handle } from "@/event";
+import { route } from "@/api";
+import { db } from "@/db";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export function GET(request: NextRequest) {
-  return handle(request, "health");
-}
+export const GET = route({}, () => {
+  db.prepare("SELECT 1").get();
+  return { ok: true };
+});

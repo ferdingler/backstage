@@ -98,7 +98,8 @@ recommendation, choose a different question, or hide content from broadcast.
 
 ## 12:00–15:00 — Closing Q&A
 
-Open **Recommended** and press **Recommend order**. Compare the recommendation with plain vote order.
+Open **Recommended** and press **Recommend order**, or **Refresh** if an order
+already exists. Compare the recommendation with plain vote order.
 Choose a question, show it on broadcast, answer it, and mark it answered by the
 speaker. Repeat as time permits. Do not promise to answer every submission.
 

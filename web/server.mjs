@@ -1,9 +1,22 @@
 import http from "node:http";
+import { readFileSync } from "node:fs";
 import next from "next";
 import { isIP } from "node:net";
 import routes from "./routes.json" with { type: "json" };
 
 const dev = process.argv.includes("--dev");
+// The listeners serve the local build: host and agent routes included, and
+// x-backstage-* headers (set below from the socket) trusted by api.ts.
+process.env.BACKSTAGE_BUILD = "local";
+globalThis.backstageListeners = true;
+if (!dev) {
+  let routes = "";
+  try {
+    routes = readFileSync(".next/app-path-routes-manifest.json", "utf8");
+  } catch {}
+  if (!routes.includes('"/host/page"'))
+    throw new Error("No local build found. Run `npm run build:local` first.");
+}
 const app = next({ dev, hostname: "127.0.0.1" });
 await app.prepare();
 const handler = app.getRequestHandler();

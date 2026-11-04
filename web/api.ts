@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomBytes } from "node:crypto";
+import { isIP } from "node:net";
 import { config, keys, store, transaction, ttl } from "./db";
 import { ApiError, fail, object, type Json } from "./validate";
 import routes from "./routes.json";
@@ -38,7 +39,7 @@ export function route(
       const spec = (routes.api as Record<string, ApiRoute | undefined>)[
         req.nextUrl.pathname
       ];
-      const channel = req.headers.get("x-backstage-channel") as Channel;
+      const { channel } = caller(req);
       if (!spec?.channels.includes(channel))
         fail(
           403,
@@ -62,6 +63,42 @@ export function route(
     } catch (error) {
       return errorResponse(error);
     }
+  };
+}
+
+/**
+ * Who is calling, and over which listener. Under server.mjs (local build) the
+ * server strips client-sent x-backstage-* headers and sets them from the
+ * socket, so they are trusted. The public build runs behind a managed HTTPS
+ * front end (Amplify/CloudFront) with no server.mjs: it is always the public
+ * channel and ignores x-backstage-* entirely. The client IP is the entry
+ * FORWARDED_HOPS from the right of X-Forwarded-For (default 1, the address
+ * the front end appended); entries further left are client-controlled.
+ */
+function caller(req: NextRequest): {
+  channel: Channel;
+  ip: string;
+  https: boolean;
+} {
+  if (process.env.BACKSTAGE_BUILD === "local") {
+    if (!(globalThis as { backstageListeners?: boolean }).backstageListeners)
+      fail(503, "NO_LISTENERS", "Start the local build with server.mjs.");
+    return {
+      channel: req.headers.get("x-backstage-channel") as Channel,
+      ip: req.headers.get("x-backstage-ip") || "unknown",
+      https: req.headers.get("x-backstage-scheme") === "https",
+    };
+  }
+  const hops = Number(process.env.FORWARDED_HOPS || 1);
+  const chain = (req.headers.get("x-forwarded-for") || "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const ip = chain[chain.length - hops];
+  return {
+    channel: "public",
+    ip: ip && isIP(ip) ? ip : "unknown",
+    https: req.headers.get("x-forwarded-proto") !== "http",
   };
 }
 
@@ -193,7 +230,7 @@ function rateLimit(
   if (bucket === "read")
     return limit(`read:${visitorId}`, config.readsPerMinute);
   limit(`write-global`, config.globalWrites);
-  limit(`write-ip:${req.headers.get("x-backstage-ip")}`, config.writesPerIp);
+  limit(`write-ip:${caller(req).ip}`, config.writesPerIp);
   limit(
     `${bucket}:${visitorId}`,
     bucket === "question" ? config.questionsPerMinute : config.votesPerMinute,
@@ -219,7 +256,7 @@ async function visitor(
       "COOKIES_REQUIRED",
       "Enable cookies and refresh this page before participating.",
     );
-  limit(`cookie:${req.headers.get("x-backstage-ip")}`, config.cookiesPerIp);
+  limit(`cookie:${caller(req).ip}`, config.cookiesPerIp);
   const id = randomBytes(32).toString("hex");
   const expires = Date.now() + visitorTtlSeconds * 1000;
   const [pk, sk] = keys.visitor(id);
@@ -233,7 +270,7 @@ function setVisitorCookie(req: NextRequest, res: NextResponse, id: string) {
   res.cookies.set(visitorCookie, id, {
     httpOnly: true,
     sameSite: "lax",
-    secure: req.headers.get("x-backstage-scheme") === "https",
+    secure: caller(req).https,
     path: "/",
     maxAge: visitorTtlSeconds,
   });

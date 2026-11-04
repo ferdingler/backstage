@@ -25,10 +25,10 @@ You're giving a talk. The audience scans a QR code, submits questions, and votes
 Inside Box, the agent can:
 
 - receive questions and the session's talking points through a narrow agent API,
-- write disposable notes in a scratch directory, through Strands Shell, so every file operation is a policy decision,
+- write and read one disposable file, `agent/scratch/working-note.txt`, through Strands Shell, so each tool file operation is a policy decision,
 - call one Bedrock model. Box's gateway signs those requests; the agent only ever holds placeholder credentials.
 
-It can't read other files, reach any other host, call host controls, cast votes, change vote counts, or touch the database. The app owns the original questions and votes. Agent replies are always labeled, and a reply never marks a question as answered by you.
+Shell tools cannot read or write other files. Native Python access is bounded separately by the filesystem grants in `box.toml` and Box's runtime minimum. The agent cannot reach other network destinations, call host controls, cast votes, change vote counts, or touch the database. The app owns the original questions and votes. Agent replies are always labeled, and a reply never marks a question as answered by you.
 
 Spending is bounded too: a 100-call model budget per event (six held back for the closing Q&A), one run in flight, 60-second deadlines, and capped retries. Pausing the agent never breaks the website or your controls.
 
@@ -137,12 +137,14 @@ With the agent stopped, run these against disposable files outside `agent/scratc
 
 ```sh
 uv run --project agent python box/run.py --probe-command 'cat /absolute/canary'
-uv run --project agent python box/run.py --probe-command 'printf probe > /absolute/outside-scratch'
+uv run --project agent python box/run.py --probe-command "printf '%s\\n' probe > /absolute/outside-scratch"
 uv run --project agent python box/run.py --probe-http GET https://example.com/
 uv run --project agent python box/run.py --probe-http POST http://127.0.0.1:3003/api/host/control
 ```
 
 All four should fail, each with a matching decision record. Other checks: `cd web && npm run typecheck && npm run build:local`; `box/run.py --check` builds the agent without calling the model; `box/run.py --once` runs one real batch.
+
+The permitted shell workflow is `printf '%s\n' TEXT > working-note.txt`, followed by `cat working-note.txt`, from the scratch directory. Other scratch files, directory listings, permission changes, deletion, and external programs are denied. The network policy allows only the configured model's streaming endpoint over intercepted TLS and the seven agent API operations. Request bodies are capped at 1 MiB for the model, 8 KiB for results, and 512 bytes for bookkeeping; state reads carry no body. Model-call counts, token limits, session selection, and JSON field validation remain application controls: this Box schema does not expose those fields to the policy.
 
 ## Reference
 

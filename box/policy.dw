@@ -1,4 +1,4 @@
-// This template is materialized by configure.py with canonical local paths.
+// This template is filled in by box/run.py with canonical local paths.
 // The only model connection; the gateway injects credentials from aws://bedrock.
 @id("bedrock_connect")
 permit (principal, action == Box::Action::"net:connect", resource)

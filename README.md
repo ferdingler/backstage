@@ -56,7 +56,6 @@ You need Linux ARM64 with unprivileged user, mount, and process namespaces, Node
 ```sh
 (cd web && npm ci && npm run build:local)
 (cd agent && uv sync --frozen)
-uv run --project agent python box/configure.py
 (cd web && AWS_PROFILE=bedrock npm run db:create)   # once: creates the DynamoDB table
 ```
 
@@ -147,9 +146,9 @@ All four should fail, each with a matching decision record. Other checks: `cd we
 
 ## Reference
 
-**Layout.** `web/` is the Next.js app: audience page, host console, and API. `agent/` is the Strands agent. `box/` holds the Box configuration (`box.toml` starts the process and grants files; `policy.dw` decides shell and network requests), its launcher, and the decision viewer. `cdk/` is the optional public deployment.
+**Layout.** `web/` is the Next.js app: audience page, host console, and API. `agent/` is the Strands agent. `box/` holds the Box configuration (`box.toml` starts the process and grants files; `policy.dw` decides shell and network requests), `run.py` (fills in local paths, supplies temporary credentials, starts Box), and `decisions.py` (prints Box's permit/deny records). `cdk/` is the optional public deployment.
 
-**Configuration.** Web settings are environment variables listed in `web/.env.example`: ports (3000 audience, 3001 host, 3003 agent), the audience URL and allowed origins, the table name, the question cap, rate limits, and the model budget. Agent settings (model, region, API URL, session) live in `[agent].env` in `box/box.toml`. Box doesn't inherit your shell, so rerun `box/configure.py` after editing it or rebuilding the Python environment. `web/routes.json` lists every route and which listener serves it.
+**Configuration.** Web settings are environment variables listed in `web/.env.example`: ports (3000 audience, 3001 host, 3003 agent), the audience URL and allowed origins, the table name, the question cap, rate limits, and the model budget. Agent settings (model, region, API URL, session) live in `[agent].env` in `box/box.toml`. Box doesn't inherit your shell. `box/run.py` regenerates the machine-specific `box.local.toml` and `policy.local.dw` from these templates on every start. `web/routes.json` lists every route and which listener serves it.
 
 **How host controls stay private.** Locally, one process opens three listeners on `127.0.0.1` (audience, host, and agent), and each serves only its own routes. Host and agent route files are named `*.private.ts(x)` and compile only in `npm run build:local`; plain `npm run build` produces the public build without them. State lives in one DynamoDB table, which is how the local host console and a deployed audience site share an event.
 

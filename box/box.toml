@@ -1,4 +1,4 @@
-# Template: run `uv run --project agent python box/configure.py` before starting.
+# Template: box/run.py fills it in on every start.
 # Generated paths live in ignored box/box.local.toml, not in this portable file.
 # Reference: strands-agents/box 5ba7010488dc28c64b7f18dd4c5328cc8b02dafa.
 name = "backstage"

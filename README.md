@@ -4,9 +4,14 @@ Backstage is a local, fifteen-minute Q&A prototype. Audience members submit anon
 
 The app owns original questions, votes, and speaker actions. Agent replies and recommendations are labeled. An agent reply never marks a question answered by the speaker. Audience text, including prompt injections, reaches the agent unchanged and renders as escaped text.
 
-**Local prototype only.** Nothing is deployed. Public HTTPS hosting and an outside-host audience rehearsal remain open under [issue #11](https://github.com/ferdingler/backstage/issues/11). [Issue #13](https://github.com/ferdingler/backstage/issues/13) tracks implementation and validation. There is no maintained test suite; use the manual checks below.
+Backstage runs in two places that share one DynamoDB table:
 
-## Start the demo
+- **Your machine** runs the agent and the host console (the admin page). Both stay on loopback; reach the host page from another computer through SSH forwarding or a Midway tunnel.
+- **The audience site** runs either locally too (for rehearsal) or on Amplify Hosting for a real room (optional, below). The public deployment contains only the audience pages and public API.
+
+[Issue #13](https://github.com/ferdingler/backstage/issues/13) tracks implementation and validation. There is no maintained test suite; use the manual checks below.
+
+## Run the app
 
 Prerequisites: Linux ARM64 with working unprivileged user/mount/process namespaces, Node.js 22.13 or newer, npm, uv, git, Rust/Cargo, AWS CLI v2, and a working `bedrock` profile with model access in `us-west-2`. The web app stores its state in a DynamoDB table in the same account. The Isengard instructions also require Ada. Box's Linux support is experimental. This configuration targets that platform; a Mac needs separate runtime grants and a platform rehearsal.
 
@@ -65,9 +70,25 @@ uv run --project agent python box/run.py --session SESSION_ID
 python3 box/decisions.py --follow
 ```
 
-Open the audience at `http://127.0.0.1:3000`, host at `http://127.0.0.1:3001/host`, and selected-content broadcast at `http://127.0.0.1:3000/broadcast`. Readiness: `curl -f http://127.0.0.1:3000/api/health`. For development, replace `npm start` with `npm run dev`.
+Open the host at `http://127.0.0.1:3001/host`, the audience at `http://127.0.0.1:3000`, and the broadcast view at `http://127.0.0.1:3000/broadcast`. Readiness: `curl -f http://127.0.0.1:3000/api/health`. For development, replace `npm start` with `npm run dev`. After changing web code, rerun `npm run build:local`; `npm start` refuses a build without the host and agent routes.
 
-The default QR code points to loopback and works only on the same machine. Use two browser profiles for local rehearsal. Phone participation needs an authorized reachable audience ingress and a corresponding `AUDIENCE_URL`.
+With only a local audience, the QR code points to loopback and works on the same machine; use two browser profiles to rehearse. For phones, use the public site:
+
+```sh
+# Terminal 1, instead of the plain npm start above.
+AUDIENCE_URL=https://main.APP_ID.amplifyapp.com \
+PUBLIC_ORIGINS=https://main.APP_ID.amplifyapp.com \
+AWS_PROFILE=bedrock npm start
+```
+
+The host QR code and audience link then point at Amplify. The agent is unchanged: it talks to the local agent listener on `127.0.0.1:3003`.
+
+**On a cloud desktop,** open the host page through an owner-only Midway tunnel to the host listener. Check `tunnel list` for an existing one first, then `tunnel create 3001 --name backstage-host` (omit `--allow` to keep it owner-only). Add its origin when starting the web process: `HOST_ORIGINS=https://fdingler-backstage-host.w.tunnels.lab.aws.dev`. Alternatively, forward the ports to your laptop over SSH, started outside Box:
+
+```sh
+ssh -N -L 127.0.0.1:3000:127.0.0.1:3000 \
+  -L 127.0.0.1:3001:127.0.0.1:3001 USER@CLOUD_DESKTOP
+```
 
 The agent command resolves a temporary session from `bedrock` outside containment, stores it under `box/.runtime/credential-sessions/` with mode 0600, and supplies Box's `aws://bedrock` credential source. That operator-only directory is outside the agent's grants and Box's own state directory. The gateway signs requests; the agent receives placeholders. This accommodates Ada's `credential_process`, which Box deliberately does not execute. The wrapper removes its snapshot on exit. Refresh the source profile and restart the worker if the session expires. Secrets are never printed or committed.
 
@@ -130,58 +151,30 @@ Edit `[agent].env` in `box/box.toml` and rerun `configure.py` to change `MODEL_I
 
 Host and agent pages and routes are named `*.private.ts(x)`. `npm run build:local` (and `npm run dev`) compiles them; `server.mjs` refuses to start without that build. Plain `npm run build` is the public build for a managed HTTPS host such as Amplify: it contains only the audience pages, `/broadcast`, and the public API, so host and agent paths return 404 there whatever headers a client sends. The public build always runs as the public channel, ignores `x-backstage-*` headers, takes the client IP from the `FORWARDED_HOPS`-th entry from the right of `X-Forwarded-For` (default 1), and marks the cookie Secure unless the front end reports `http`. Both builds share the DynamoDB table.
 
-## Public audience site (CDK)
+## Deploy the public site to Amplify (optional)
 
-`cdk/` deploys the public build to Amplify Hosting in the table's account. Nothing else moves: the agent, host page, and `server.mjs` stay on your machine and share the table.
+`cdk/` puts the audience site on Amplify Hosting in the table's account. Only the audience moves; the agent, host page, and `server.mjs` stay on your machine.
 
 - `BackstagePublic` (us-west-2): settings for an Amplify app you create in the console. The console connects GitHub through the Amplify GitHub App, so no token is stored. The stack sets the build spec (`npm run build` in `web/`, failing if host or agent routes appear), turns PR previews and automatic branch creation off, sets the audience variables, and attaches an SSR role that can only `GetItem`, `Query`, `PutItem`, and `DeleteItem` on the existing `backstage` table. The table is referenced, not owned, so destroying the stack leaves its data.
-- `BackstageFirewall` (us-east-1, required for Amplify): an AWS WAF web ACL that blocks every path except the public pages, public API, and `/_next/static/`, and rate-limits per IP (`ipLimit`, default 5000 / 5 min) and in total (`globalLimit`, default 50000 / 5 min). Override them with `-c ipLimit=…`.
+- `BackstageFirewall` (us-east-1, where Amplify requires it): an AWS WAF web ACL that blocks every path except the public pages, the public API, and `/_next/static/`, and rate-limits per IP (`ipLimit`, default 5000 / 5 min) and in total (`globalLimit`, default 50000 / 5 min). Override them with `-c ipLimit=…` and `-c globalLimit=…`.
 
-One-time setup: in the Amplify console (us-west-2), create an app from GitHub `ferdingler/backstage`, branch `main`, monorepo root `web`. Note its app ID (`d…`). Then:
+Steps:
 
-```sh
-cd cdk && npm ci
-npx cdk deploy --all --profile bedrock -c appId=APP_ID
-aws amplify start-job --app-id APP_ID --branch-name main --job-type RELEASE \
-  --profile bedrock --region us-west-2
-```
+1. Make sure `main` on GitHub has the code you want public. Amplify builds from GitHub, not from your machine, and every push to `main` redeploys.
+2. In the Amplify console (us-west-2), create an app from GitHub: authorize the Amplify GitHub App for this repository only, pick branch `main`, tick monorepo with root `web`, and accept the suggested build settings (the stack replaces them). Stop the build the console starts; it runs without the database role or firewall. Note the app ID (`d…`).
+3. Deploy the stacks and start a build with the final settings. Both regions need `cdk bootstrap` once.
 
-The `AudienceUrl` output is the public link. Start the local web process with `AUDIENCE_URL` and `PUBLIC_ORIGINS` set to it so the host QR code points there. Amplify officially lists Next.js through 15; this app uses 16 with webpack, so confirm the first build. After it is live, check that host and agent paths return 403 from the firewall, and confirm the client IP the app sees (set `FORWARDED_HOPS` if it is wrong). Pushes to `main` redeploy. `npx cdk destroy --all` removes the site.
+   ```sh
+   cd cdk && npm ci
+   npx cdk deploy --all --profile bedrock -c appId=APP_ID
+   aws amplify start-job --app-id APP_ID --branch-name main --job-type RELEASE \
+     --profile bedrock --region us-west-2
+   ```
 
-## Private access and prepared public ingress
+4. Check from outside: `https://main.APP_ID.amplifyapp.com` and `/api/state` return 200; `/host`, `/api/host/state`, and `/api/agent/state` return 403. Submit and vote from a phone. If every visitor ends up in one rate-limit bucket, the client IP is wrong; adjust `FORWARDED_HOPS`.
+5. Start the local web process with that URL, as shown in **Run the app**.
 
-The current workstation also has owner-only, Midway-authenticated previews:
-
-- Audience: `https://fdingler-backstage.w.tunnels.lab.aws.dev`
-- Host: `https://fdingler-backstage-host.w.tunnels.lab.aws.dev/host`
-
-These forward to the local app. They are private previews, not the anonymous public hosting required for a room of attendees. Recreate them with `tunnel create 3000 --name backstage` and `tunnel create 3001 --name backstage-host`; omit `--allow` to keep owner-only access. Check for an existing tunnel with each name before starting another.
-
-To retain these URLs after restarting the web process, start it from `web/` with:
-
-```sh
-AUDIENCE_URL=https://fdingler-backstage.w.tunnels.lab.aws.dev \
-PUBLIC_ORIGINS=http://127.0.0.1:3010,https://fdingler-backstage.w.tunnels.lab.aws.dev \
-HOST_ORIGINS=https://fdingler-backstage-host.w.tunnels.lab.aws.dev \
-TRUSTED_PROXY_IP=127.0.0.1 AWS_PROFILE=bedrock npm start
-```
-
-Use SSH forwarding from the presenter machine. Start transports outside Box:
-
-```sh
-ssh -N -L 127.0.0.1:3000:127.0.0.1:3000 \
-  -L 127.0.0.1:3001:127.0.0.1:3001 USER@PRESENTATION_HOST
-```
-
-If the web process moves to an authorized host, forward only its agent listener to the presentation machine:
-
-```sh
-ssh -N -L 127.0.0.1:3003:127.0.0.1:3003 USER@WEB_HOST
-```
-
-`web/Caddyfile` supplies a concrete allowlist proxy. Its default listener is local `http://127.0.0.1:3010`. For local writes, include that exact origin in `PUBLIC_ORIGINS`, set `AUDIENCE_URL` accordingly, and run `caddy run --config Caddyfile` from `web/`. The app origin stays loopback. Caddy rejects host/agent paths and unexpected methods.
-
-Public HTTPS requires an authorized host, domain/DNS, TLS setup, and SSH access. Set `AUDIENCE_LISTEN`, `AUDIENCE_URL`, `PUBLIC_ORIGINS`, and the explicit `TRUSTED_PROXY_IP`; configure the proxy's listener for that authorized network. It must replace forwarded IP/scheme headers. Open only HTTPS ingress; keep app ports and database private. `web/backstage.service.example` provides restart behavior; set its `ExecStart` to your Node.js 22.13+ executable before installing it. This repository creates no hosting target or infrastructure.
+Amplify officially lists Next.js through 15; this app uses 16 with webpack and builds there. The firewall adds a monthly charge while attached. To tear down, run `npx cdk destroy --all -c appId=APP_ID --profile bedrock` and delete the app in the Amplify console.
 
 ## Recovery, backup, and shutdown
 
@@ -191,7 +184,7 @@ Public HTTPS requires an authorized host, domain/DNS, TLS setup, and SSH access.
 - **Web restart:** stop/start Node. DynamoDB preserves the event, leases, and budget. The worker reconnects; polling backs off without erasing content.
 - **Backup:** the table has point-in-time recovery. Restore to a new table and point `BACKSTAGE_TABLE` at it.
 - **Reset:** use the host's confirmed reset. It moves the session to a new generation and then deletes the old generation's items.
-- **Shutdown:** Ctrl-C worker, web, log viewer, and SSH/Caddy processes. Remove Box state/scratch only after stopping; retain decision records needed for the talk.
+- **Shutdown:** Ctrl-C worker, web, log viewer, and SSH/tunnel processes. Remove Box state/scratch only after stopping; retain decision records needed for the talk.
 
 ## Service contract
 
@@ -250,4 +243,6 @@ Local validation on **November 2, 2026** used Node.js 22.22.3, Next.js 16.4.4, R
 | Timed runtime rehearsal | 22:24:01–22:39:07 UTC (15m06s): four real replies, two marked leave-for-speaker, votes 2/1/0/0, a web restart, live boundary probes, closing requested at minute 12, and two host-selected questions answered. Final usage: 18 model calls, zero outstanding reservations. |
 | Ingress | Local Caddy and owner-only Midway previews passed route isolation and forwarded-header checks. Anonymous preview requests reached the Midway gate; the public listener rejected host and agent routes. |
 
-This was a local runtime/browser rehearsal, not a timed human delivery or an outside-device audience rehearsal. Public hosting remains unperformed because the implementation was explicitly scoped to local execution. Detailed handoffs are recorded on issues #1–#13. Temporary validation scripts and runtime evidence are outside the committed source; no permanent tests were added.
+This was a local runtime/browser rehearsal, not a timed human delivery or an outside-device audience rehearsal.
+
+On **November 4, 2026** the public build deployed to Amplify (us-west-2) behind the WAF web ACL. From outside, with a spoofed `x-backstage-channel: host` header, `/`, `/broadcast`, `/api/health`, and `/api/state` returned 200 with live table state; `/host`, host and agent API reads and writes, and unlisted paths returned 403; the visitor cookie was `Secure; HttpOnly`; a cross-origin question POST returned 403. Phone submission/voting and the client IP seen by the app remain to be checked. Detailed handoffs are recorded on issues #1–#13. Temporary validation scripts and runtime evidence are outside the committed source; no permanent tests were added.

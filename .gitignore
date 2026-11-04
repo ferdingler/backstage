@@ -20,3 +20,5 @@ box/policy.local.dw
 *.sqlite-shm
 *.sqlite-wal
 .DS_Store
+cdk/node_modules/
+cdk/cdk.out/

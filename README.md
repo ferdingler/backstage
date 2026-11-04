@@ -15,7 +15,7 @@ Install from the component lockfiles:
 ```sh
 cd web
 npm ci
-npm run build
+npm run build:local
 cd ../agent
 uv sync --frozen
 cd ..
@@ -126,6 +126,28 @@ The agent directly reads its source/runtime and uses its temporary directory. Ta
 
 Edit `[agent].env` in `box/box.toml` and rerun `configure.py` to change `MODEL_ID`, `AWS_REGION`, `BACKSTAGE_API_URL`, `BACKSTAGE_SESSION`, `BACKSTAGE_SCRATCH`, or `BACKSTAGE_SHELL`. Box does not inherit these settings from your shell. Region/API-port changes also need matching policy and credential destinations. `MODEL_PROVIDER=bedrock` is the qualified provider. An optional OpenAI adapter needs separate Box configuration and validation. Export `BOX_BIN` to override the operator's binary path. Add `BACKSTAGE_RUN_SECONDS` to `[agent].env` to lower the 60-second deadline for recovery checks.
 
+## Local and public builds
+
+Host and agent pages and routes are named `*.private.ts(x)`. `npm run build:local` (and `npm run dev`) compiles them; `server.mjs` refuses to start without that build. Plain `npm run build` is the public build for a managed HTTPS host such as Amplify: it contains only the audience pages, `/broadcast`, and the public API, so host and agent paths return 404 there whatever headers a client sends. The public build always runs as the public channel, ignores `x-backstage-*` headers, takes the client IP from the `FORWARDED_HOPS`-th entry from the right of `X-Forwarded-For` (default 1), and marks the cookie Secure unless the front end reports `http`. Both builds share the DynamoDB table.
+
+## Public audience site (CDK)
+
+`cdk/` deploys the public build to Amplify Hosting in the table's account. Nothing else moves: the agent, host page, and `server.mjs` stay on your machine and share the table.
+
+- `BackstagePublic` (us-west-2): settings for an Amplify app you create in the console. The console connects GitHub through the Amplify GitHub App, so no token is stored. The stack sets the build spec (`npm run build` in `web/`, failing if host or agent routes appear), turns PR previews and automatic branch creation off, sets the audience variables, and attaches an SSR role that can only `GetItem`, `Query`, `PutItem`, and `DeleteItem` on the existing `backstage` table. The table is referenced, not owned, so destroying the stack leaves its data.
+- `BackstageFirewall` (us-east-1, required for Amplify): an AWS WAF web ACL that blocks every path except the public pages, public API, and `/_next/static/`, and rate-limits per IP (`ipLimit`, default 5000 / 5 min) and in total (`globalLimit`, default 50000 / 5 min). Override them with `-c ipLimit=…`.
+
+One-time setup: in the Amplify console (us-west-2), create an app from GitHub `ferdingler/backstage`, branch `main`, monorepo root `web`. Note its app ID (`d…`). Then:
+
+```sh
+cd cdk && npm ci
+npx cdk deploy --all --profile bedrock -c appId=APP_ID
+aws amplify start-job --app-id APP_ID --branch-name main --job-type RELEASE \
+  --profile bedrock --region us-west-2
+```
+
+The `AudienceUrl` output is the public link. Start the local web process with `AUDIENCE_URL` and `PUBLIC_ORIGINS` set to it so the host QR code points there. Amplify officially lists Next.js through 15; this app uses 16 with webpack, so confirm the first build. After it is live, check that host and agent paths return 403 from the firewall, and confirm the client IP the app sees (set `FORWARDED_HOPS` if it is wrong). Pushes to `main` redeploy. `npx cdk destroy --all` removes the site.
+
 ## Private access and prepared public ingress
 
 The current workstation also has owner-only, Midway-authenticated previews:
@@ -200,7 +222,7 @@ The server validates original IDs, generation/revision, work ownership, pause st
 
 ## Manual validation and reference
 
-Build/type checks: `cd web && npm run typecheck && npm run build`. SDK construction without a model call: `uv run --project agent python box/run.py --check`. One real batch: `uv run --project agent python box/run.py --once`. Use two independent browser profiles to submit, vote, reload, and inspect literal HTML-like input. Confirm host controls work with the worker stopped.
+Build/type checks: `cd web && npm run typecheck && npm run build:local`. SDK construction without a model call: `uv run --project agent python box/run.py --check`. One real batch: `uv run --project agent python box/run.py --once`. Use two independent browser profiles to submit, vote, reload, and inspect literal HTML-like input. Confirm host controls work with the worker stopped.
 
 For file probes, create disposable synthetic canaries outside `agent/scratch/`. Run each probe with the worker stopped, then compare actual results with `python3 box/decisions.py`:
 

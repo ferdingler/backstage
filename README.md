@@ -70,10 +70,10 @@ mkdir -p box/.runtime/bin
 cp box/.runtime/source/target/release/{strands-box,strands-box-contain-trampoline,strands-box-sock-alias} box/.runtime/bin/
 ```
 
-**3. Refresh credentials** (Isengard example; run it outside Box)
+**3. Check credentials.** Refresh the `bedrock` profile however you normally get AWS credentials (SSO, a `credential_process`, or temporary keys), outside Box, and confirm it works:
 
 ```sh
-ada credentials update --account ACCOUNT_ID --provider isengard --role Admin --profile bedrock --once
+aws sts get-caller-identity --profile bedrock
 ```
 
 **4. Start three terminals** from the repository root
@@ -90,7 +90,7 @@ Always start the agent through `box/run.py`. Running `agent/src/main.py` directl
 
 Locally, the QR code only works on the same machine, so rehearse with two browser profiles. To let phones join, [put the audience site on the internet](#put-the-audience-site-on-the-internet).
 
-**On a cloud desktop,** reach the host console through an owner-only Midway tunnel: run `tunnel create 3001 --name backstage-host`, then start the web app with `HOST_ORIGINS=https://fdingler-backstage-host.w.tunnels.lab.aws.dev`. Or forward the port to your laptop with `ssh -N -L 127.0.0.1:3001:127.0.0.1:3001 USER@HOST`.
+**On a remote machine,** forward the host console to your laptop with `ssh -N -L 127.0.0.1:3001:127.0.0.1:3001 USER@HOST`. If you put an authenticated HTTPS tunnel in front of it instead, add that origin to `HOST_ORIGINS` when starting the web app. Never expose the host listener without authentication.
 
 ## Run the talk
 

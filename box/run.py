@@ -92,14 +92,14 @@ def main() -> int:
         print("Box binary missing. Build the pinned revision in README.md or set BOX_BIN.", file=sys.stderr)
         return 2
     configure(root)
-    # Ada's credential_process remains outside Box. Box deliberately accepts only
+    # A credential_process (SSO helpers and similar) stays outside Box. Box deliberately accepts only
     # static session credentials in aws:// profiles, so supply a private snapshot.
     resolved = subprocess.run(
         ["aws", "configure", "export-credentials", "--profile", "bedrock", "--format", "process"],
         text=True, capture_output=True,
     )
     if resolved.returncode:
-        print("Could not resolve the bedrock profile. Refresh its Isengard session and retry.", file=sys.stderr)
+        print("Could not resolve the bedrock profile. Refresh its credentials and retry.", file=sys.stderr)
         return 2
     try:
         credentials = json.loads(resolved.stdout)

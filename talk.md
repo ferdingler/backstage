@@ -18,7 +18,8 @@ For local rehearsal, use two browser profiles on this machine. The default
 loopback QR code cannot join from a phone. Use a reachable, authorized audience
 URL before delivering the invitation to a room.
 
-Backstage takes anonymous questions and browser votes. It reads these notes,
+Backstage takes anonymous questions and browser votes. It reads the session's
+host-written talking points,
 offers short replies, and recommends a closing queue. The application owns
 the original questions and vote counts. An agent reply leaves a question
 eligible for the speaker to answer.
@@ -43,7 +44,7 @@ tools deliberately use Strands Shell so we can inspect their policy decisions.
 
 ## 5:00–8:00 — Grant enough to do the job
 
-The agent can read these presentation notes through a tool, write a disposable
+The agent can read the session's talking points through a tool, write a disposable
 scratch note, call its configured Bedrock model, and use a restricted agent API.
 Its direct filesystem grants cover its Python runtime, source, and temporary
 files. The web database, real credential stores, and Box private state are
@@ -97,7 +98,7 @@ recommendation, choose a different question, or hide content from broadcast.
 
 ## 12:00–15:00 — Closing Q&A
 
-Press **Prepare closing Q&A**. Compare the recommendation with plain vote order.
+Open **Recommended** and press **Recommend order**. Compare the recommendation with plain vote order.
 Choose a question, show it on broadcast, answer it, and mark it answered by the
 speaker. Repeat as time permits. Do not promise to answer every submission.
 
@@ -109,5 +110,5 @@ job, an independently enforced boundary, and observable results.
 The runbook records the specific platform, build, model, and observed outcomes.
 Do not generalize one successful rehearsal into complete prompt-injection
 resistance, universal runtime compatibility, or a production security claim.
-Public hosting requires a separate authorized deployment and outside-host
-verification; this prototype is developed and rehearsed locally.
+Public hosting uses the audience-only Amplify build. Keep the host console and
+Box agent on the presentation machine, and verify the public link before each talk.

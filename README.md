@@ -105,6 +105,8 @@ Locally, the QR code only works on the same machine, so rehearse with two browse
 
 The host's activity panel shows what the app saw. Only the decision-log terminal shows what Box enforced, and a quiet log proves nothing.
 
+To shut down, stop the agent with **Ctrl-C**, then stop the decision viewer and local web process with **Ctrl-C**. Stop any SSH forwarding process as well. DynamoDB retains the sessions. The deployed audience site stays online until you tear it down separately.
+
 ## Put the audience site on the internet
 
 Optional. `cdk/` deploys a public-only build of the audience site to Amplify Hosting. The agent and host console stay on your machine, unchanged.

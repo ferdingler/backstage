@@ -94,12 +94,12 @@ Locally, the QR code only works on the same machine, so rehearse with two browse
 
 ## Run the talk
 
-[talk.md](talk.md) is the script: invite questions at the start, check in on the agent at minute 8, and hold the closing Q&A from minute 12.
+[talk.md](talk.md) is the script: invite questions at the start, check in on the agent midway, and hold the closing Q&A at the end.
 
 1. In **Host**, create a session, paste your talking points, and save.
 2. Press **Go live** and show the QR code. Only one session is live at a time.
 3. Let the questions, and the hijack attempts, roll in. **Accept questions** pauses intake; **Agent** pauses the agent.
-4. At minute 12, open **Recommended** and press **Recommend order** (or **Refresh** if an order already exists). Compare it with the plain vote ranking.
+4. For the closing Q&A, open **Recommended** and press **Recommend order** (or **Refresh** if an order already exists). Compare it with the plain vote ranking.
 5. Select a question for broadcast, answer it, and mark it answered. **Hide** keeps something off the broadcast.
 6. **Reset session…** (type `RESET`) clears questions, votes, and replies but keeps the title and talking points.
 

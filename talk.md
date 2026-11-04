@@ -1,8 +1,6 @@
 # Backstage: useful agents with bounded authority
 
-Presentation notes · 15 minutes · closing Q&A at minute 12
-
-## 0:00–2:00 — Invite the audience
+## Invite the audience
 
 “Scan this code to ask questions and vote for the ones you want me to answer
 at the end. Backstage, our AI agent, will respond while I'm talking and organize
@@ -24,7 +22,7 @@ offers short replies, and recommends a closing queue. The application owns
 the original questions and vote counts. An agent reply leaves a question
 eligible for the speaker to answer.
 
-## 2:00–5:00 — Instructions and authority
+## Instructions and authority
 
 Instructions describe the agent's job. Authority determines the operations its
 runtime can perform. A model can misunderstand an instruction or follow
@@ -42,7 +40,7 @@ Direct process file accesses use the operating system's containment boundary.
 They do not each produce a Dogwood policy decision. The demonstration's file
 tools deliberately use Strands Shell so we can inspect their policy decisions.
 
-## 5:00–8:00 — Grant enough to do the job
+## Grant enough to do the job
 
 The agent can read the session's talking points through a tool, write a disposable
 scratch note, call its configured Bedrock model, and use a restricted agent API.
@@ -60,7 +58,7 @@ The runtime needs appropriate filesystem grants, and network libraries must
 route requests through the gateway. File operations intended to show policy
 decisions must use a mediated path such as Strands Shell.
 
-## 8:00–10:00 — Check in on the live agent
+## Check in on the live agent
 
 Show one original question and the labeled Backstage reply. Compare the host's
 application activity with the local terminal displaying actual Box decisions.
@@ -76,7 +74,7 @@ Do not show credentials, raw headers, full prompts, or model reasoning.
 If Box or the model is unavailable, pause the agent and continue with the plain
 vote-ranked queue. Host controls and audience reads operate independently.
 
-## 10:00–12:00 — Keep the demo bounded
+## Keep the demo bounded
 
 The worker processes at most five pending questions at once, with one model run
 in flight. A run has a 60-second deadline, up to six model calls, and 512 output
@@ -96,7 +94,7 @@ The agent may group related questions and suggest an order. Groups retain
 the original questions and each member's votes. The host can ignore the
 recommendation, choose a different question, or hide content from broadcast.
 
-## 12:00–15:00 — Closing Q&A
+## Closing Q&A
 
 Open **Recommended** and press **Recommend order**, or **Refresh** if an order
 already exists. Compare the recommendation with plain vote order.

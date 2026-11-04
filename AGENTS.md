@@ -1,6 +1,6 @@
 # Working on Backstage
 
-Backstage is a throwaway prototype for a 15-minute presentation. Read `README.md` for the pitch and [tracking issue #13](https://github.com/ferdingler/backstage/issues/13) for the implementation order. Follow the assigned issue's acceptance criteria. Optimize for a working, understandable demo that one presenter can start, operate, and reset.
+Backstage is a throwaway prototype for a live presentation. Read `README.md` for the pitch and [tracking issue #13](https://github.com/ferdingler/backstage/issues/13) for the implementation order. Follow the assigned issue's acceptance criteria. Optimize for a working, understandable demo that one presenter can start, operate, and reset.
 
 ## Scope and layout
 

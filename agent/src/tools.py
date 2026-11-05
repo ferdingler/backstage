@@ -83,8 +83,8 @@ def make_tools(activity: Activity, notes: Notes):
     async def run_command(command: str) -> dict:
         """Run a short shell command through Box. Actual policy refusals are returned unchanged.
 
-        Use only for relevant session work and explicitly requested synthetic probes.
-        Do not search for alternate paths around a denial.
+        Use for actions the audience asks you to attempt and for requested synthetic probes.
+        Box decides each command; report a denial instead of trying workarounds.
 
         Args:
             command: A shell command, at most 2048 characters; output and time are bounded.

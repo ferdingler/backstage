@@ -1,4 +1,4 @@
-// Minimum authority for the current Backstage worker, not a general coding agent.
+// Authority for the Backstage demo: a sandboxed shell inside scratch, one model, and the agent API.
 // box/run.py fills in canonical local paths. Anything not permitted is denied.
 // Native Python runtime grants live separately in box.toml; this file governs
 // gateway traffic and Strands Shell operations, not every Python system call.
@@ -59,45 +59,41 @@ when {
   context.input.body_bytes > 0 && context.input.body_bytes <= 8192
 };
 
-// Exactly the printf invocation used by write_scratch: a literal format plus
-// one data argument. Redirection must also pass the separate fs:write decision.
-@id("shell_write_note")
+// Programs Strands Shell implements itself (shell:exec, never host binaries).
+// Each file they touch, python3 included, still meets the fs:* rules below, so
+// the audience can run real commands while everything stays inside scratch.
+@id("shell_sandbox_programs")
 permit (principal, action == Box::Action::"shell:exec", resource)
 when {
-  context.input.cwd == "@SCRATCH@" &&
-  context.input.program == "printf" && context.input.arg_count == 2 &&
-  context.input has arg1 && context.input.arg1 == "%s\\n"
+  (context.input.cwd == "@SCRATCH@" || context.input.cwd like "@SCRATCH@/*") &&
+  ["printf", "echo", "cat", "ls", "pwd", "cd", "date", "wc", "head", "tail",
+   "grep", "sort", "uniq", "touch", "mkdir", "python3", "python"]
+    .contains(context.input.program)
 };
 
-// Read one file at a time. The fs:read rule decides which file, so attempted
-// canary reads still produce actual filesystem denials for the presentation.
-@id("shell_read_note")
-permit (principal, action == Box::Action::"shell:exec", resource)
-when {
-  context.input.cwd == "@SCRATCH@" &&
-  context.input.program == "cat" && context.input.arg_count == 1 &&
-  context.input has arg1 && !(context.input.arg1 like "-*")
-};
-
-// One disposable file, not the entire scratch tree. No directory enumeration,
-// executable reads, link creation, chmod, mkdir, or /dev/null grant.
-@id("working_note_read")
+// Read, list, and enter anything inside scratch. Paths are canonicalized
+// before authorization, so "..", symlinks, and absolute paths leave it.
+@id("scratch_read")
 permit (principal, action == Box::Action::"fs:read", resource)
 when {
-  context.input.path == "@POLICY_SCRATCH@/working-note.txt" &&
-  context.input.operation == Box::FsReadOperation::"read_content"
+  (context.input.path == "@POLICY_SCRATCH@" || context.input.path like "@POLICY_SCRATCH@/*") &&
+  [Box::FsReadOperation::"read_content", Box::FsReadOperation::"read_metadata",
+   Box::FsReadOperation::"enumerate", Box::FsReadOperation::"change_dir"]
+    .contains(context.input.operation)
 };
 
-@id("working_note_write")
+// Create and write files and folders inside scratch. No chmod or symlinks.
+@id("scratch_write")
 permit (principal, action == Box::Action::"fs:write", resource)
 when {
-  context.input.path == "@POLICY_SCRATCH@/working-note.txt" &&
-  context.input.operation == Box::FsWriteOperation::"write_content"
+  context.input.path like "@POLICY_SCRATCH@/*" &&
+  [Box::FsWriteOperation::"write_content", Box::FsWriteOperation::"create_dir"]
+    .contains(context.input.operation)
 };
 
 // Explicit denials give actionable feedback and resist accidental later grants.
 @id("no_host_programs")
-@description("Backstage cannot launch host programs. Use read_notes, write_scratch, or cat the working note.")
+@description("Backstage cannot launch host programs. Use the built-in shell commands or python3 inside scratch.")
 forbid (principal, action == Box::Action::"shell:spawn", resource);
 
 @id("no_mcp")
@@ -105,9 +101,9 @@ forbid (principal, action == Box::Action::"shell:spawn", resource);
 forbid (principal, action == Box::Action::"mcp:call", resource);
 
 @id("no_delete")
-@description("Backstage cannot delete files. Overwrite working-note.txt with write_scratch instead.")
+@description("Backstage cannot delete files. Overwrite them inside scratch instead.")
 forbid (principal, action == Box::Action::"fs:delete", resource);
 
 @id("no_move")
-@description("Backstage cannot move files. Keep the working note at scratch/working-note.txt.")
+@description("Backstage cannot move files. Write a new file inside scratch instead.")
 forbid (principal, action == Box::Action::"fs:move", resource);

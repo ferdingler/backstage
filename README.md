@@ -25,7 +25,7 @@ You're giving a talk. The audience scans a QR code, submits questions, and votes
 Inside Box, the agent can:
 
 - receive questions and the session's talking points through a narrow agent API,
-- run Strands Shell's built-in commands (`echo`, `ls`, `cat`, `mkdir`, `grep`, …) and its Python subset (`python3`) inside `agent/scratch/`, where every file operation is a policy decision,
+- run any command Strands Shell implements itself (`echo`, `ls`, `cat`, `curl`, `python3`, …). Box decides each effect separately: files only inside `agent/scratch/`, network only to the model and the agent API,
 - call one Bedrock model. Box's gateway signs those requests; the agent only ever holds placeholder credentials.
 
 Shell tools cannot read or write files outside scratch, delete or move files, or launch host programs. Native Python access is bounded separately by the filesystem grants in `box.toml` and Box's runtime minimum. The agent cannot reach other network destinations, call host controls, cast votes, change vote counts, or touch the database. The app owns the original questions and votes. Agent replies are always labeled, and a reply never marks a question as answered by you.
@@ -146,7 +146,7 @@ uv run --project agent python box/run.py --probe-http POST http://127.0.0.1:3003
 
 All four should fail, each with a matching decision record. Other checks: `cd web && npm run typecheck && npm run build:local`; `box/run.py --check` builds the agent without calling the model; `box/run.py --once` runs one real batch.
 
-From the scratch directory, the shell may run its built-in `printf`, `echo`, `cat`, `ls`, `pwd`, `date`, `wc`, `head`, `tail`, `grep`, `sort`, `uniq`, `touch`, `mkdir`, and `python3` (Box's Monty Python subset, with no `os.system` or `urllib`). They can read, list, create, and write anything inside scratch. Reads and writes outside scratch, permission changes, symlinks, deletion, moves, and host programs such as `curl` are denied. The network policy allows only the configured model's streaming endpoint over intercepted TLS and the seven agent API operations. Request bodies are capped at 1 MiB for the model, 8 KiB for results, and 512 bytes for bookkeeping; state reads carry no body. Model-call counts, token limits, session selection, and JSON field validation remain application controls: this Box schema does not expose those fields to the policy.
+Every program Strands Shell implements (`shell:exec`) may start, including `curl` and `python3` (Box's Monty Python subset, with no `os.system` or `urllib`). The policy governs their effects instead: they can read, list, create, and write anything inside scratch; reads and writes outside scratch, permission changes, symlinks, deletion, and moves are denied, and their network traffic meets the same gateway rules as the agent's. Host binaries (`shell:spawn`, such as `/usr/bin/uname`) are forbidden because they bypass per-file decisions. The network policy allows only the configured model's streaming endpoint over intercepted TLS and the seven agent API operations. Request bodies are capped at 1 MiB for the model, 8 KiB for results, and 512 bytes for bookkeeping; state reads carry no body. Model-call counts, token limits, session selection, and JSON field validation remain application controls: this Box schema does not expose those fields to the policy.
 
 ## Reference
 

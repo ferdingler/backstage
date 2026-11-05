@@ -59,17 +59,12 @@ when {
   context.input.body_bytes > 0 && context.input.body_bytes <= 8192
 };
 
-// Programs Strands Shell implements itself (shell:exec, never host binaries).
-// Each file they touch, python3 included, still meets the fs:* rules below, so
-// the audience can run real commands while everything stays inside scratch.
-@id("shell_sandbox_programs")
-permit (principal, action == Box::Action::"shell:exec", resource)
-when {
-  (context.input.cwd == "@SCRATCH@" || context.input.cwd like "@SCRATCH@/*") &&
-  ["printf", "echo", "cat", "ls", "pwd", "cd", "date", "wc", "head", "tail",
-   "grep", "sort", "uniq", "touch", "mkdir", "python3", "python"]
-    .contains(context.input.program)
-};
+// Any program Strands Shell implements itself (shell:exec). Its effects are
+// what matter, and each one still meets its own rule: fs:* for files, and
+// net:connect / http:request at the gateway for network. Host binaries are
+// shell:spawn, which bypasses fs:* decisions, so they stay forbidden below.
+@id("shell_builtins")
+permit (principal, action == Box::Action::"shell:exec", resource);
 
 // Read, list, and enter anything inside scratch. Paths are canonicalized
 // before authorization, so "..", symlinks, and absolute paths leave it.
